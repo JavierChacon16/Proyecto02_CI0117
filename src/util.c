@@ -1,3 +1,4 @@
+
 //
 // Created by Sleyter Angulo on 9/14/26.
 //
@@ -5,6 +6,7 @@
 
 #define _GNU_SOURCE
 
+#include "state.h"
 #include "util.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -14,6 +16,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <limits.h>
+#include <poll.h>
+#include <time.h>
 
 int nu_listen(unsigned short port, int backlog)
 {
@@ -124,7 +129,54 @@ int nu_write_all(int fd, const void *buffer, size_t size)
     return 0;
 }
 
-ssize_t nu_read_line(int fd, char *buffer, size_t size)
+/* recv no bloqueante + poll: el plazo absoluto NO se renueva con cada byte.
+
+ */
+static ssize_t recibir(int fd, void *buffer, size_t size,
+                       const struct timespec *until)
+{
+    if (!until) {
+        ssize_t n;
+        do { n = recv(fd, buffer, size, 0); } while (n < 0 && errno == EINTR);
+        return n;
+    }
+    struct timespec inactivo;
+    if (clock_gettime(CLOCK_MONOTONIC, &inactivo) < 0) return -1;
+    struct timeval timeout;
+    socklen_t len = sizeof timeout;
+    if (getsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, &len) < 0) return -1;
+    struct timespec limite = *until;
+    if (timeout.tv_sec || timeout.tv_usec) {
+        inactivo.tv_sec += timeout.tv_sec;
+        inactivo.tv_nsec += timeout.tv_usec * 1000L;
+        if (inactivo.tv_nsec >= 1000000000L) {
+            ++inactivo.tv_sec; inactivo.tv_nsec -= 1000000000L;
+        }
+        if (inactivo.tv_sec < limite.tv_sec ||
+            (inactivo.tv_sec == limite.tv_sec && inactivo.tv_nsec < limite.tv_nsec))
+            limite = inactivo;
+    }
+    for (;;) {
+        struct timespec ahora;
+        if (clock_gettime(CLOCK_MONOTONIC, &ahora) < 0) return -1;
+        long long ns = (long long)(limite.tv_sec - ahora.tv_sec) * 1000000000LL
+                     + limite.tv_nsec - ahora.tv_nsec;
+        if (ns <= 0) { errno = ETIMEDOUT; return -1; }
+        ssize_t n = recv(fd, buffer, size, MSG_DONTWAIT);
+        if (n >= 0) return n;
+        if (errno == EINTR) continue;
+        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+        long long ms = (ns + 999999) / 1000000;
+        struct pollfd evento = { .fd = fd, .events = POLLIN };
+        int rc = poll(&evento, 1, ms > INT_MAX ? INT_MAX : (int)ms);
+        if (rc < 0 && errno != EINTR) return -1;
+        if (rc > 0 && (evento.revents & POLLNVAL)) { errno = EBADF; return -1; }
+        /* Volver a comprobar el reloj incluso si poll reporta datos. */
+    }
+}
+
+ssize_t nu_read_line_until(int fd, char *buffer, size_t size,
+                           const struct timespec *until)
 {
     size_t used = 0;
     int larga = 0;
@@ -135,14 +187,9 @@ ssize_t nu_read_line(int fd, char *buffer, size_t size)
         return NU_ERROR;
 
     for (;;) {
-        ssize_t n;
-
-        do {
-            n = recv(fd, &c, 1, 0);
-        } while (n < 0 && errno == EINTR);
-
+        ssize_t n = recibir(fd, &c, 1, until);
         if (n < 0)
-            return NU_ERROR;
+            return errno == ETIMEDOUT ? NU_TIMEOUT : NU_ERROR;
 
         if (n == 0) {
             if (used == 0 && !larga && !invalida)
@@ -176,21 +223,16 @@ ssize_t nu_read_line(int fd, char *buffer, size_t size)
     }
 }
 
-int nu_read_all(int fd, void *buffer, size_t size)
+int nu_read_all_until(int fd, void *buffer, size_t size,
+                      const struct timespec *until)
 {
     char *p = buffer;
     size_t received = 0;
 
     while (received < size) {
-        ssize_t n = recv(fd, p + received,
-                         size - received, 0);
-
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            perror("recv");
-            return NU_ERROR;
-        }
+        ssize_t n = recibir(fd, p + received, size - received, until);
+        if (n < 0)
+            return errno == ETIMEDOUT ? NU_TIMEOUT : NU_ERROR;
 
         if (n == 0)
             return NU_CLOSED;
@@ -204,4 +246,14 @@ int nu_read_all(int fd, void *buffer, size_t size)
 int nu_send_response(int fd, const char *response)
 {
     return nu_write_all(fd, response, strlen(response));
+}
+
+ssize_t nu_read_line(int fd, char *buffer, size_t size)
+{
+    return nu_read_line_until(fd, buffer, size, NULL);
+}
+
+int nu_read_all(int fd, void *buffer, size_t size)
+{
+    return nu_read_all_until(fd, buffer, size, NULL);
 }
