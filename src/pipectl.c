@@ -1,4 +1,3 @@
-
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -6,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "state.h"
 #include "protocol.h"
 #include "util.h"
 
