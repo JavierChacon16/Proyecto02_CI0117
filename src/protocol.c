@@ -1,4 +1,6 @@
+#include "state.h"
 #include "protocol.h"
+#include "util.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -8,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_TOKENS 8
+#define MAX_TOKENS 8// numero maximo de tokens en una linea de solicitud, incluyendo el comando y los argumentos
 
 
 
@@ -20,7 +22,7 @@ static int fail(const char **motivo, const char *msg)
     return -1;
 }
 
-
+/* dividir una linea en partes separadas por espacios o tabuladores*/
 static int tokenize(const char *line, char *work, size_t work_size, char *tokv[], int max_tokens)
 {
     size_t len = strlen(line);
@@ -33,27 +35,26 @@ static int tokenize(const char *line, char *work, size_t work_size, char *tokv[]
     memcpy(work, line, len);
     work[len] = '\0';
 
-int n = 0;
-char *p = work;
-while (true) {
-    while (*p == ' ' || *p == '\t') {
-        *p = '\0';
-        p++;
-    }
-    if (*p == '\0') {
-        break;
-    }
-    if (n >= max_tokens) {
-        return -1;
-    }
-    tokv[n++] = p;
-    while (*p != '\0' && *p != ' ' && *p != '\t') {
-        p++;
-    }
+    int n = 0;
+    char *p = work;
+    while (true) {
+        while (*p == ' ' || *p == '\t') {
+            *p = '\0';
+            p++;
+        }
+        if (*p == '\0') {
+            break;
+        }
+        if (n >= max_tokens) {
+            return -1;
+        }
+        tokv[n++] = p;
+        while (*p != '\0' && *p != ' ' && *p != '\t') {
+            p++;
+        }
 }
 return n;
 }
-
 
 static int parse_int(const char *s, int min, int max, int *out)
 {
@@ -91,7 +92,7 @@ static bool valid_job_ref(const char *s)
     }
     return slashes <= 1;
 }
-
+/*parsea una linea de solicitud y llena la estructura request_t correspondiente */
 int protocol_parse_request(const char *line, request_t *out_req, const char **motivo)
 {
     if (line == NULL || out_req == NULL) {
@@ -103,7 +104,7 @@ int protocol_parse_request(const char *line, request_t *out_req, const char **mo
     char *tok[MAX_TOKENS];
     int n = tokenize(line, work, sizeof work, tok, MAX_TOKENS);
     if (n < 0) {
-        return fail(motivo, "linea demasiado espacios");
+        return fail(motivo, "linea demasiado larga");
     }
     if (n == 0) {
         return fail(motivo, "linea vacia");
@@ -111,7 +112,7 @@ int protocol_parse_request(const char *line, request_t *out_req, const char **mo
 
     int id = 0;
 
-    if (strcmp(tok[0], "SUBMIT") == 0) {
+    if (strcmp(tok[0], "SUBMIT") == 0) {//verifica si el comando es SUBMIT
         int len = 0;
         if (n != 2 || parse_int(tok[1], 1, PROTO_MAX_YAML, &len) != 0) {
             return fail(motivo, "uso: SUBMIT <bytes> (1 a 1048576)");
@@ -121,7 +122,8 @@ int protocol_parse_request(const char *line, request_t *out_req, const char **mo
         return 0;
     }
 
-    if (strcmp(tok[0], "STATUS") == 0) {
+    if (strcmp(tok[0], "STATUS") == 0) {//verifica si el comando es STATUS, si es asi, verifica que tenga 2 tokens y
+        //que el segundo token sea un entero valido, si no, devuelve un error con el mensaje de uso correcto
         if (n != 2 || parse_int(tok[1], 0, INT_MAX, &id) != 0) {
             return fail(motivo, "uso: STATUS <id>");
         }
@@ -129,7 +131,8 @@ int protocol_parse_request(const char *line, request_t *out_req, const char **mo
         out_req->data.status.id = id;
         return 0;
     }
-    if (strcmp(tok[0], "CANCEL") == 0) {
+    if (strcmp(tok[0], "CANCEL") == 0) {//verifica si el comando es CANCEL, si es asi, verifica que tenga 2 tokens y 
+        //que el segundo token sea un entero valido, si no, devuelve un error con el mensaje de uso correcto
         if (n != 2 || parse_int(tok[1], 0, INT_MAX, &id) != 0) {
             return fail(motivo, "uso: CANCEL <id>");
         }
@@ -137,7 +140,8 @@ int protocol_parse_request(const char *line, request_t *out_req, const char **mo
         out_req->data.cancel.id = id;
         return 0;
     }
-    if (strcmp(tok[0], "LOGS") == 0) {
+    if (strcmp(tok[0], "LOGS") == 0) {//verifica si el comando es LOGS, si es asi, verifica que tenga 4 tokens 
+        //y que el segundo token sea un entero valido, si no, devuelve un error con el mensaje de uso correcto
         int follow = 0;
         if (n != 4 || parse_int(tok[1], 0, INT_MAX, &id) != 0
             || parse_int(tok[3], 0, 1, &follow) != 0) {
@@ -155,14 +159,16 @@ int protocol_parse_request(const char *line, request_t *out_req, const char **mo
         out_req->data.logs.follow = (follow == 1);
         return 0;
     }
-    if (strcmp(tok[0], "LIST") == 0) {
+    if (strcmp(tok[0], "LIST") == 0) {//verifica si el comando es LIST, si es asi, verifica que tenga 1 token, 
+        //si no, devuelve un error con el mensaje de uso correcto
         if (n != 1) {
             return fail(motivo, "LIST no lleva parametros");
         }
         out_req->type = CMD_LIST;
         return 0;
     }
-    if (strcmp(tok[0], "SHUTDOWN") == 0) {
+    if (strcmp(tok[0], "SHUTDOWN") == 0) {//verifica si el comando es SHUTDOWN, si es asi, 
+        //verifica que tenga 1 token, si no, devuelve un error con el mensaje de uso correcto
         if (n != 1) {
             return fail(motivo, "SHUTDOWN no lleva parametros");
         }
@@ -198,7 +204,7 @@ static int format_line(char *buf, int max_len, const char *fmt, ...)
     buf[n + 1] = '\0';
     return n + 1;
 }
-
+/* FUNCIONES PARA FORMATEAR LAS RESPUESTAS DEL PROTOCOLO*/
 int protocol_format_ok(char *buf, int max_len, int id)
 {
     return format_line(buf, max_len, "OK %d", id);
@@ -245,7 +251,26 @@ int protocol_format_logs(char *buf, int max_len, int id)
 }
 int protocol_format_log_line(char *buf, int max_len, const char *texto)
 {
-    return format_line(buf, max_len, "L %s", texto);
+    if (!buf || max_len < 4 || !texto) return -1;
+    buf[0] = '\0';
+    size_t len = strlen(texto);
+    size_t partes = len ? 1 + (len - 1) / PROTO_LOG_CHUNK : 1;
+    /* Comprobar capacidad sin overflow; nunca truncar silenciosamente. */
+    size_t capacidad = (size_t)max_len - 1;
+    if (len > capacidad || partes > (capacidad - len) / 3) return -1;
+    size_t entrada = 0, salida = 0;
+    do {
+        size_t n = len - entrada;
+        if (n > PROTO_LOG_CHUNK) n = PROTO_LOG_CHUNK;
+        buf[salida++] = 'L'; buf[salida++] = ' ';
+        for (size_t i = 0; i < n; ++i) {
+            char c = texto[entrada++];
+            buf[salida++] = (c == '\n' || c == '\r') ? ' ' : c;
+        }
+        buf[salida++] = '\n';
+    } while (entrada < len);
+    buf[salida] = '\0';
+    return (int)salida;
 }
 int protocol_format_end(char *buf, int max_len)
 {
@@ -254,4 +279,22 @@ int protocol_format_end(char *buf, int max_len)
 int protocol_format_bye(char *buf, int max_len)
 {
     return format_line(buf, max_len, "BYE");
+}
+/* Para LOGS: transmitir texto arbitrariamente largo con buffers acotados.
+ * Mantener la serializacion por conexion si varios productores la comparten.
+ */
+int protocol_send_log_lines(int fd, const char *texto)
+{
+    if (!texto) return -1;
+    size_t restante = strlen(texto);
+    do {
+        size_t n = restante > PROTO_LOG_CHUNK ? PROTO_LOG_CHUNK : restante;
+        char trozo[PROTO_LOG_CHUNK + 1];
+        char linea[PROTO_LOG_CHUNK + 4];
+        memcpy(trozo, texto, n); trozo[n] = '\0';
+        if (protocol_format_log_line(linea, sizeof linea, trozo) < 0 ||
+            nu_send_response(fd, linea) != 0) return -1;
+        texto += n; restante -= n;
+    } while (restante);
+    return 0;
 }

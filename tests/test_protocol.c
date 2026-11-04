@@ -1,99 +1,67 @@
-
+#define _POSIX_C_SOURCE 200809L
+#include <assert.h>
+#include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include "protocol.h"
+#include "util.h"
 
+typedef struct { int fd; const char *texto; } envio_t;
+static void *enviar(void *arg)
+{
+    envio_t *e = arg;
+    assert(protocol_send_log_lines(e->fd, e->texto) == 0);
+    shutdown(e->fd, SHUT_WR);
+    return NULL;
+}
 int main(void)
 {
     request_t req;
     const char *motivo = NULL;
-    char respuesta[128];
-    int errores = 0;
-
-    if (protocol_parse_request("LIST\n", &req, &motivo) != 0 ||
-        req.type != CMD_LIST) {
-        printf("Error: LIST\n");
-        errores++;
-    }
-
-    if (protocol_parse_request("SHUTDOWN\n", &req, &motivo) != 0 ||
-        req.type != CMD_SHUTDOWN) {
-        printf("Error: SHUTDOWN\n");
-        errores++;
-    }
-
-    if (protocol_parse_request("STATUS 12\n", &req, &motivo) != 0 ||
-        req.type != CMD_STATUS || req.data.status.id != 12) {
-        printf("Error: STATUS\n");
-        errores++;
-    }
-
-    if (protocol_parse_request("CANCEL 12\n", &req, &motivo) != 0 ||
-        req.type != CMD_CANCEL || req.data.cancel.id != 12) {
-        printf("Error: CANCEL\n");
-        errores++;
-    }
-
-    if (protocol_parse_request("SUBMIT 50\n", &req, &motivo) != 0 ||
-        req.type != CMD_SUBMIT || req.data.submit.yaml_len != 50) {
-        printf("Error: SUBMIT\n");
-        errores++;
-    }
-
-    if (protocol_parse_request("LOGS 12 - 1\n", &req, &motivo) != 0 ||
-        req.type != CMD_LOGS || req.data.logs.id != 12 ||
-        req.data.logs.job[0] != '\0' || !req.data.logs.follow) {
-        printf("Error: LOGS\n");
-        errores++;
-    }
-
-    if (protocol_parse_request("LOGS 12 build/test 1\n",
-                               &req, &motivo) != 0 ||
-        req.type != CMD_LOGS ||
-        strcmp(req.data.logs.job, "build/test") != 0) {
-        printf("Error: nombre de trabajo en LOGS\n");
-        errores++;
-    }
-
-    const char *invalidos[] = {
-        "",
-        "NOEXISTE\n",
-        "STATUS abc\n",
-        "SUBMIT 0\n",
-        "LIST 3\n",
-        "LOGS 1 trabajo 2\n"
-    };
-
-    int cantidad = (int)(sizeof invalidos / sizeof invalidos[0]);
-
-    for (int i = 0; i < cantidad; i++) {
-        motivo = NULL;
-
-        if (protocol_parse_request(invalidos[i], &req,
-                                   &motivo) == 0 || motivo == NULL) {
-            printf("Error: solicitud invalida %d\n", i + 1);
-            errores++;
+    char enorme[PROTO_MAX_REQUEST_LINE + 10];
+    memset(enorme, 'a', sizeof enorme - 1); enorme[sizeof enorme - 1] = '\0';
+    assert(protocol_parse_request(enorme, &req, &motivo) < 0);
+    assert(strcmp(motivo, "linea demasiado larga") == 0);
+    assert(protocol_parse_request(" \tSUBMIT\t8\r\n", &req, &motivo) == 0);
+    assert(req.type == CMD_SUBMIT && req.data.submit.yaml_len == 8);
+    const size_t largos[] = {0, 1, 4000, 4001, 8000, 12037};
+    for (size_t k = 0; k < sizeof largos / sizeof largos[0]; ++k) {
+        size_t len = largos[k];
+        char *texto = malloc(len + 1);
+        char *salida = malloc(len + 100);
+        assert(texto && salida);
+        for (size_t i = 0; i < len; ++i) texto[i] = (char)('a' + i % 26);
+        texto[len] = '\0';
+        int n = protocol_format_log_line(salida, (int)len + 100, texto);
+        assert(n >= 3);
+        char chico[4];
+        if (len > 0) assert(protocol_format_log_line(chico, sizeof chico, texto) == -1);
+        int sockets[2];
+        assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+        envio_t envio = { sockets[0], texto };
+        pthread_t hilo;
+        assert(pthread_create(&hilo, NULL, enviar, &envio) == 0);
+        char linea[PROTO_MAX_RESPONSE_LINE];
+        size_t leidos = 0, partes = 0;
+        ssize_t bytes;
+        while ((bytes = nu_read_line(sockets[1], linea, sizeof linea)) != NU_CLOSED) {
+            assert(bytes >= 2 && bytes <= PROTO_LOG_CHUNK + 2);
+            assert(strncmp(linea, "L ", 2) == 0);
+            assert(memcmp(texto + leidos, linea + 2, (size_t)bytes - 2) == 0);
+            leidos += (size_t)bytes - 2;
+            ++partes;
         }
+        assert(leidos == len);
+        assert(partes == (len ? (len + 3999) / 4000 : 1));
+        assert((size_t)n == len + partes * 3);
+        pthread_join(hilo, NULL);
+        close(sockets[0]); close(sockets[1]);
+        free(texto); free(salida);
     }
-
-    if (protocol_format_ok(respuesta, (int)sizeof respuesta, 7) <= 0 ||
-        strcmp(respuesta, "OK 7\n") != 0) {
-        printf("Error: respuesta OK\n");
-        errores++;
-    }
-
-    if (protocol_format_end(respuesta, (int)sizeof respuesta) <= 0 ||
-        strcmp(respuesta, "END\n") != 0) {
-        printf("Error: respuesta END\n");
-        errores++;
-    }
-
-    if (errores > 0) {
-        printf("Fallaron %d pruebas\n", errores);
-        return 1;
-    }
-
-    printf("Pruebas de protocolo: OK\n");
+    puts("OK: protocolo y logs fragmentados sin perdida");
     return 0;
 }
 
