@@ -1,59 +1,48 @@
 
 # Proyecto 2 - CI-0117
 
-
 CC = gcc
 CFLAGS = -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp -Iinclude
 
-SRC_DIR = src
-BUILD_DIR = build
-TEST_DIR = tests
-
-OBJS = $(BUILD_DIR)/protocol.o $(BUILD_DIR)/util.o
-
-TESTS = $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_util
+BUILD = build
+OBJ = $(BUILD)/protocol.o $(BUILD)/util.o
 
 .PHONY: all test clean
 
-# Compilar servidor y cliente
-all: $(BUILD_DIR)/pipelined $(BUILD_DIR)/pipectl
+all: $(BUILD)/pipelined $(BUILD)/pipectl
 
-# Crear carpeta de compilacion
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+$(BUILD):
+	mkdir -p $(BUILD)
 
-# Compilar protocolo
-$(BUILD_DIR)/protocol.o: $(SRC_DIR)/protocol.c include/protocol.h | $(BUILD_DIR)
+$(BUILD)/protocol.o: src/protocol.c include/protocol.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Compilar utilidades de red
-$(BUILD_DIR)/util.o: $(SRC_DIR)/util.c include/util.h | $(BUILD_DIR)
+$(BUILD)/util.o: src/util.c include/util.h | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Compilar servidor
-$(BUILD_DIR)/pipelined: $(SRC_DIR)/pipelined.c $(OBJS)
+$(BUILD)/pipelined: src/pipelined.c $(OBJ)
 	$(CC) $(CFLAGS) $^ -o $@
 
-# Compilar cliente
-$(BUILD_DIR)/pipectl: $(SRC_DIR)/pipectl.c $(OBJS)
+$(BUILD)/pipectl: src/pipectl.c $(OBJ)
 	$(CC) $(CFLAGS) $^ -o $@
 
-# Compilar pruebas del protocolo
-$(BUILD_DIR)/test_protocol: $(TEST_DIR)/test_protocol.c $(BUILD_DIR)/protocol.o
+$(BUILD)/test_protocol: tests/test_protocol.c $(BUILD)/protocol.o
 	$(CC) $(CFLAGS) $^ -o $@
 
-# Compilar pruebas de utilidades
-$(BUILD_DIR)/test_util: $(TEST_DIR)/test_util.c $(BUILD_DIR)/util.o
+$(BUILD)/test_util: tests/test_util.c $(BUILD)/util.o
 	$(CC) $(CFLAGS) $^ -o $@
 
-# Ejecutar pruebas
-test: all $(TESTS)
-	./$(BUILD_DIR)/test_protocol
-	./$(BUILD_DIR)/test_util
+$(BUILD)/test_integration: tests/test_integration.c $(BUILD)/util.o
+	$(CC) $(CFLAGS) $^ -o $@
 
-# Limpiar archivos compilados
+test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_integration
+	./$(BUILD)/test_protocol
+	./$(BUILD)/test_util
+	./$(BUILD)/test_integration
+
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD)
+
 
 
 	
