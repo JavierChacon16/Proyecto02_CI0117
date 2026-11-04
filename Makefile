@@ -1,6 +1,7 @@
 
 # Proyecto 2 - CI-0117
 
+
 CC = gcc
 CFLAGS = -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp -Iinclude
 
@@ -14,10 +15,10 @@ TESTS = $(BUILD_DIR)/test_protocol $(BUILD_DIR)/test_util
 
 .PHONY: all test clean
 
-# Compilacion de los modulos y el cliente
-all: $(OBJS) $(BUILD_DIR)/pipectl
+# Compilar servidor y cliente
+all: $(BUILD_DIR)/pipelined $(BUILD_DIR)/pipectl
 
-# Crear directorio de compilacion
+# Crear carpeta de compilacion
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
@@ -28,6 +29,10 @@ $(BUILD_DIR)/protocol.o: $(SRC_DIR)/protocol.c include/protocol.h | $(BUILD_DIR)
 # Compilar utilidades de red
 $(BUILD_DIR)/util.o: $(SRC_DIR)/util.c include/util.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# Compilar servidor
+$(BUILD_DIR)/pipelined: $(SRC_DIR)/pipelined.c $(OBJS)
+	$(CC) $(CFLAGS) $^ -o $@
 
 # Compilar cliente
 $(BUILD_DIR)/pipectl: $(SRC_DIR)/pipectl.c $(OBJS)
