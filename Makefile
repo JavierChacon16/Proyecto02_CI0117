@@ -1,6 +1,6 @@
 
 # Proyecto 2 - CI-0117
-# Servidor de pipelines concurrente
+
 
 CC = gcc
 
@@ -10,7 +10,7 @@ CFLAGS = -std=$(STD) -Wall -Wextra -pedantic -O2 -pthread -fopenmp
 CFLAGS += $(EXTRA)
 
 CPPFLAGS = -Iinclude
-LDLIBS = -pthread -fopenmp -lyaml
+LDLIBS = -pthread -fopenmp -lyaml -lm
 
 BUILD = build
 
@@ -42,7 +42,8 @@ TESTS = $(BUILD)/test_protocol \
         $(BUILD)/test_submit_yaml \
         $(BUILD)/test_script \
         $(BUILD)/test_tasks \
-        $(BUILD)/test_data
+        $(BUILD)/test_data \
+        $(BUILD)/test_model
 
 .PHONY: all test clean race FORCE
 
@@ -106,6 +107,14 @@ $(BUILD)/test_tasks: tests/test_tasks.c $(BUILD)/tasks.o
 $(BUILD)/test_data: tests/test_data.c $(BUILD)/tasks.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
+# Compilacion independiente: no necesita libyaml.
+$(BUILD)/test_model: tests/test_model.c $(BUILD)/model.o $(BUILD)/script.o $(BUILD)/tasks.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -pthread -fopenmp -lm -o $@
+
+.PHONY: test-model
+test-model: $(BUILD)/test_model
+	./$(BUILD)/test_model
+
 test: all $(TESTS)
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
@@ -118,10 +127,12 @@ test: all $(TESTS)
 	./$(BUILD)/test_script
 	./$(BUILD)/test_tasks
 	./$(BUILD)/test_data
+	./$(BUILD)/test_model
 
 clean:
 	rm -rf $(BUILD) pipelined pipectl pipelined-race
 
 -include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
+
 
 
