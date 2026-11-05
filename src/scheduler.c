@@ -5,6 +5,8 @@
 #include "protocol.h"
 #include "util.h"
 #include "yaml_parser.h"
+#include "validator.h"
+
 #include <limits.h>
 #include <sched.h>
 #include <stdlib.h>
@@ -19,7 +21,6 @@ static int siguiente_id(servidor_t *s)
     unsigned int id = s->proximo_id;
 
 #ifdef SIN_PROTECCION
-    /* Carrera intencional para la demostracion. */
     sched_yield();
 #endif
 
@@ -112,6 +113,28 @@ static void drenar_payload(cliente_t *c, size_t bytes)
     }
 }
 
+static int responder_invalido(int fd, const char *mensaje)
+{
+    char respuesta[PROTO_MAX_RESPONSE_LINE];
+
+    if (protocol_format_invalid(respuesta,
+                                sizeof respuesta, 1) < 0 ||
+        nu_send_response(fd, respuesta) != 0)
+        return -1;
+
+    if (protocol_format_invalid_item(
+            respuesta, sizeof respuesta,
+            "yaml", mensaje) < 0 ||
+        nu_send_response(fd, respuesta) != 0)
+        return -1;
+
+    if (protocol_format_end(respuesta,
+                            sizeof respuesta) < 0)
+        return -1;
+
+    return nu_send_response(fd, respuesta);
+}
+
 int submit(cliente_t *c, size_t bytes)
 {
     servidor_t *s = c->servidor;
@@ -155,8 +178,8 @@ int submit(cliente_t *c, size_t bytes)
         return error_cliente(c->fd, "INTERNAL", "sin memoria");
     }
 
-    int lectura = nu_read_all_until(c->fd, e->yaml, bytes,
-                                   &c->vencimiento);
+    int lectura = nu_read_all_until(
+        c->fd, e->yaml, bytes, &c->vencimiento);
 
     if (lectura != 0 || memchr(e->yaml, '\0', bytes)) {
         free(e->yaml);
@@ -173,33 +196,22 @@ int submit(cliente_t *c, size_t bytes)
     e->yaml[bytes] = '\0';
     e->bytes = bytes;
 
-    /* Validar antes de asignar el ID. */
     char error_yaml[256];
 
-    if (validar_yaml(e->yaml, bytes,
-                     error_yaml, sizeof error_yaml) != 0) {
+    int valido = validar_yaml(
+        e->yaml, bytes, error_yaml, sizeof error_yaml);
+
+    if (valido == 0) {
+        valido = validar_dependencias_yaml(
+            e->yaml, bytes, error_yaml, sizeof error_yaml);
+    }
+
+    if (valido != 0) {
         free(e->yaml);
         free(e);
         liberar_reserva(s, bytes);
 
-        char respuesta[PROTO_MAX_RESPONSE_LINE];
-
-        if (protocol_format_invalid(respuesta,
-                                    sizeof respuesta, 1) < 0 ||
-            nu_send_response(c->fd, respuesta) != 0)
-            return -1;
-
-        if (protocol_format_invalid_item(
-                respuesta, sizeof respuesta,
-                "yaml", error_yaml) < 0 ||
-            nu_send_response(c->fd, respuesta) != 0)
-            return -1;
-
-        if (protocol_format_end(respuesta,
-                                sizeof respuesta) < 0)
-            return -1;
-
-        return nu_send_response(c->fd, respuesta);
+        return responder_invalido(c->fd, error_yaml);
     }
 
     nombre_provisional(e);
@@ -315,22 +327,25 @@ int consultar(cliente_t *c, int id, int lista)
     int rc = 0;
 
     if (lista) {
-        rc = protocol_format_list(linea, sizeof linea, (int)n);
+        rc = protocol_format_list(
+            linea, sizeof linea, (int)n);
 
         if (rc >= 0)
             rc = nu_send_response(c->fd, linea);
     }
 
-    for (i = 0; i < n && rc >= 0; ++i) {
+    for (i = 0; i < n && rc >= 0; i++) {
         if (lista) {
             rc = protocol_format_run(
-                linea, sizeof linea, filas[i].id,
+                linea, sizeof linea,
+                filas[i].id,
                 estado_texto(filas[i].estado),
                 filas[i].nombre
             );
         } else {
             rc = protocol_format_status(
-                linea, sizeof linea, filas[i].id,
+                linea, sizeof linea,
+                filas[i].id,
                 estado_texto(filas[i].estado),
                 filas[i].ms
             );
@@ -348,3 +363,4 @@ int consultar(cliente_t *c, int id, int lista)
 
     return nu_send_response(c->fd, linea);
 }
+
