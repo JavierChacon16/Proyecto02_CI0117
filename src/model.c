@@ -1,4 +1,5 @@
 
+
 #define _POSIX_C_SOURCE 200809L
 #include "model.h"
 #include "script.h"
@@ -97,12 +98,13 @@ static int disponible(const plan_trabajos_t *plan, size_t id,
 }
 
 static int ejecutar_paso(const paso_t *p, unsigned limite,
-                         uint64_t *cpu)
+                         uint64_t *cpu, const atomic_int *cancelar)
 {
     switch (p->tipo) {
     case PASO_SCRIPT: {
         int salida = -1;
-        return ejecutar_script(p->comando, limite, &salida);
+        return ejecutar_script_controlado(p->comando, limite, &salida,
+                                          p->log_ruta, cancelar);
     }
     case PASO_SLEEP:
         return tarea_sleep(p->segundos);
@@ -125,12 +127,13 @@ static estado_trabajo_t ejecutar_trabajo(trabajo_t *t)
 
     int parcial = 0;
     for (size_t i = 0; i < t->cantidad_pasos; ++i) {
+        if (t->cancelar && atomic_load(t->cancelar))
+            return TRABAJO_FALLIDO;
         unsigned limite = 0;
         if (t->timeout_segundos) {
             double tiempo = ahora() - inicio;
             if (tiempo < 0 || tiempo >= (double)t->timeout_segundos)
                 return TRABAJO_FALLIDO;
-
             /* Redondear hacia arriba para que el subproceso no reciba 0,
                que en ejecutar_script significa sin limite. */
             limite = (unsigned)ceil((double)t->timeout_segundos - tiempo);
@@ -139,7 +142,7 @@ static estado_trabajo_t ejecutar_trabajo(trabajo_t *t)
         }
 
         int resultado = ejecutar_paso(&t->pasos[i], limite,
-                                      &t->resultado_cpu);
+                                      &t->resultado_cpu, t->cancelar);
         if (t->timeout_segundos &&
             ahora() - inicio >= (double)t->timeout_segundos)
             return TRABAJO_FALLIDO;
@@ -210,7 +213,6 @@ int ejecutar_plan(plan_trabajos_t *plan, int agentes)
 
             estado_trabajo_t resultado = ejecutar_trabajo(
                 &plan->trabajos[elegido]);
-
             #pragma omp critical(planificador_trabajos)
             {
                 plan->trabajos[elegido].estado = resultado;
