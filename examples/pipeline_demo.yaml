@@ -1,1 +1,22 @@
 
+name: demostracion
+
+stages:
+  - stage: construir
+    jobs:
+      - job: preparar
+        steps:
+          - script: echo Preparando proyecto
+
+      - job: compilar
+        dependsOn: preparar
+        steps:
+          - script: echo Compilando proyecto
+
+  - stage: pruebas
+    dependsOn: construir
+    jobs:
+      - job: verificar
+        steps:
+          - script: echo Ejecutando pruebas
+
