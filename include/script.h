@@ -2,14 +2,20 @@
 #ifndef SCRIPT_H
 #define SCRIPT_H
 
-/* Ejecuta un comando de shell.
- *  0: termina correctamente.
- * -1: error o codigo de salida distinto de cero.
- * -2: supera el tiempo limite.
- * timeout_seg igual a 0 significa sin limite.
+#include <stdatomic.h>
+
+/* 0: exito; -1: error o salida no cero; -2: timeout; -3: cancelado.
+ * log_ruta: NULL para heredar stdout/stderr, de lo contrario agrega ambos
+ * flujos al archivo indicado.
+ * cancelar: NULL o bandera atomica cuyo valor 1 solicita cancelacion.
  */
-int ejecutar_script(const char *comando, unsigned int timeout_seg,
-                   int *salida);
+int ejecutar_script_controlado(const char *comando, unsigned timeout_seg,
+                              int *salida, const char *log_ruta,
+                              const atomic_int *cancelar);
+
+/* Interfaz anterior, conservada para los llamadores existentes. */
+int ejecutar_script(const char *comando, unsigned timeout_seg, int *salida);
 
 #endif
+
 
