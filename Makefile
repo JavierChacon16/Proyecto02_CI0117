@@ -1,7 +1,6 @@
 
 # Proyecto 2 - CI-0117
 
-
 CC = gcc
 
 STD ?= $(shell printf 'int main(void){return 0;}\n' | $(CC) -std=c23 -x c -fsyntax-only - >/dev/null 2>&1 && echo c23 || echo c2x)
@@ -61,14 +60,19 @@ $(BUILD)/test_busy: tests/test_busy.c $(filter-out $(BUILD)/pipelined.o,$(SERVER
 $(BUILD)/test_cli: tests/test_cli.c $(BUILD)/util.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli
+$(BUILD)/test_graph: tests/test_graph.c $(BUILD)/graph.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli $(BUILD)/test_graph
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
 	./$(BUILD)/test_busy
 	./$(BUILD)/test_cli
+	./$(BUILD)/test_graph
 
 clean:
 	rm -rf $(BUILD)
 	rm -f pipelined pipectl pipelined-race
 
 -include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
+
