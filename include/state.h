@@ -12,7 +12,7 @@
 #define MAX_BYTES_COLA ((size_t)256 * 1024 * 1024)
 #define PLAZO_LECTURA 10
 
-typedef enum { QUEUED, RUNNING, SUCCEEDED, CANCELED } estado_t;
+typedef enum { QUEUED, RUNNING,SUCCEEDED, PARTIALLY_SUCCEEDED,FAILED,CANCELED,SKIPPED } estado_t;
 typedef struct ejecucion {
     int id;
     estado_t estado;
@@ -22,7 +22,10 @@ typedef struct ejecucion {
     struct timespec inicio, fin;
     struct ejecucion *siguiente, *cola;
 } ejecucion_t;
+
+
 typedef struct cliente cliente_t;
+
 typedef struct {
     pthread_mutex_t mu, mu_id;
     pthread_cond_t cambio;
