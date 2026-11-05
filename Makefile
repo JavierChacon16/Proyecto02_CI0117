@@ -1,14 +1,15 @@
 
+
 # Proyecto 2 - CI-0117
 
-CC = gcc
 
+CC = gcc
 STD ?= $(shell printf 'int main(void){return 0;}\n' | $(CC) -std=c23 -x c -fsyntax-only - >/dev/null 2>&1 && echo c23 || echo c2x)
 
 CFLAGS = -std=$(STD) -Wall -Wextra -pedantic -O2 -pthread -fopenmp
 CFLAGS += $(EXTRA)
 CPPFLAGS = -Iinclude
-LDLIBS = -pthread -fopenmp
+LDLIBS = -pthread -fopenmp -lyaml
 
 BUILD = build
 
@@ -49,26 +50,30 @@ pipelined-race: $(RACE_OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_protocol: tests/test_protocol.c $(BUILD)/protocol.o $(BUILD)/util.o
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_util: tests/test_util.c $(BUILD)/util.o
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_busy: tests/test_busy.c $(filter-out $(BUILD)/pipelined.o,$(SERVER_OBJ))
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_cli: tests/test_cli.c $(BUILD)/util.o
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_graph: tests/test_graph.c $(BUILD)/graph.o
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli $(BUILD)/test_graph
+$(BUILD)/test_yaml: tests/test_yaml.c $(BUILD)/yaml_parser.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli $(BUILD)/test_graph $(BUILD)/test_yaml
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
 	./$(BUILD)/test_busy
 	./$(BUILD)/test_cli
 	./$(BUILD)/test_graph
+	./$(BUILD)/test_yaml
 
 clean:
 	rm -rf $(BUILD)
