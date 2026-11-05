@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 typedef enum {
     PASO_SCRIPT, PASO_SLEEP, PASO_CPU,
@@ -16,15 +17,14 @@ typedef enum {
     TRABAJO_FALLIDO, TRABAJO_OMITIDO
 } estado_trabajo_t;
 
-typedef enum {
-    COND_SUCCEEDED, COND_FAILED, COND_ALWAYS
-} condicion_t;
+typedef enum { COND_SUCCEEDED, COND_FAILED, COND_ALWAYS } condicion_t;
 
 typedef struct {
     tipo_paso_t tipo;
     const char *comando;
     const char *archivo;
     const char *salida;
+    const char *log_ruta;
     double segundos;
     uint64_t iteraciones;
     uint64_t semilla;
@@ -44,6 +44,7 @@ typedef struct {
     condicion_t condicion;
     estado_trabajo_t estado;
     uint64_t resultado_cpu;
+    const atomic_int *cancelar;
 } trabajo_t;
 
 typedef struct {
@@ -58,4 +59,5 @@ typedef struct {
 int ejecutar_plan(plan_trabajos_t *plan, int agentes);
 
 #endif
+
 
