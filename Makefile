@@ -1,48 +1,74 @@
 
 # Proyecto 2 - CI-0117
 
+
 CC = gcc
-CFLAGS = -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp -Iinclude
+
+STD ?= $(shell printf 'int main(void){return 0;}\n' | $(CC) -std=c23 -x c -fsyntax-only - >/dev/null 2>&1 && echo c23 || echo c2x)
+
+CFLAGS = -std=$(STD) -Wall -Wextra -pedantic -O2 -pthread -fopenmp
+CFLAGS += $(EXTRA)
+CPPFLAGS = -Iinclude
+LDLIBS = -pthread -fopenmp
 
 BUILD = build
-OBJ = $(BUILD)/protocol.o $(BUILD)/util.o
 
-.PHONY: all test clean
+SERVER_SOURCES = src/pipelined.c src/server.c src/scheduler.c src/agents.c src/protocol.c src/util.c
+CLIENT_SOURCES = src/pipectl.c src/protocol.c src/util.c
 
-all: $(BUILD)/pipelined $(BUILD)/pipectl
+SERVER_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(SERVER_SOURCES))
+CLIENT_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(CLIENT_SOURCES))
+RACE_OBJ = $(patsubst src/%.c,$(BUILD)/race/%.o,$(SERVER_SOURCES))
 
-$(BUILD):
-	mkdir -p $(BUILD)
+.PHONY: all test clean race FORCE
 
-$(BUILD)/protocol.o: src/protocol.c include/protocol.h | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+all: pipelined pipectl
 
-$(BUILD)/util.o: src/util.c include/util.h | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+pipelined: $(SERVER_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-$(BUILD)/pipelined: src/pipelined.c $(OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+pipectl: $(CLIENT_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-$(BUILD)/pipectl: src/pipectl.c $(OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+$(BUILD)/%.o: src/%.c $(BUILD)/flags
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(BUILD)/test_protocol: tests/test_protocol.c $(BUILD)/protocol.o
-	$(CC) $(CFLAGS) $^ -o $@
+$(BUILD)/race/%.o: src/%.c $(BUILD)/flags
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSIN_PROTECCION -MMD -MP -c $< -o $@
+
+$(BUILD)/flags: FORCE
+	@mkdir -p $(BUILD)
+	@printf '%s\n' '$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(LDLIBS)' > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+	@rm -f $@.tmp
+
+race: pipelined-race
+
+pipelined-race: $(RACE_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_protocol: tests/test_protocol.c $(BUILD)/protocol.o $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_util: tests/test_util.c $(BUILD)/util.o
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-$(BUILD)/test_integration: tests/test_integration.c $(BUILD)/util.o
-	$(CC) $(CFLAGS) $^ -o $@
+$(BUILD)/test_busy: tests/test_busy.c $(filter-out $(BUILD)/pipelined.o,$(SERVER_OBJ))
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_integration
+$(BUILD)/test_cli: tests/test_cli.c $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
-	./$(BUILD)/test_integration
+	./$(BUILD)/test_busy
+	./$(BUILD)/test_cli
 
 clean:
 	rm -rf $(BUILD)
+	rm -f pipelined pipectl pipelined-race
 
-
-
-	
+-include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
