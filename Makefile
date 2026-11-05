@@ -1,7 +1,5 @@
 
-
 # Proyecto 2 - CI-0117
-# Servidor de pipelines concurrente
 
 CC = gcc
 
@@ -9,17 +7,27 @@ STD ?= $(shell printf 'int main(void){return 0;}\n' | $(CC) -std=c23 -x c -fsynt
 
 CFLAGS = -std=$(STD) -Wall -Wextra -pedantic -O2 -pthread -fopenmp
 CFLAGS += $(EXTRA)
+
 CPPFLAGS = -Iinclude
 LDLIBS = -pthread -fopenmp -lyaml
 
 BUILD = build
 
-SERVER_SOURCES = src/pipelined.c src/server.c src/scheduler.c src/agents.c src/protocol.c src/util.c src/yaml_parser.c
+SERVER_SOURCES = src/pipelined.c src/server.c src/scheduler.c src/agents.c src/protocol.c src/util.c src/yaml_parser.c src/validator.c src/graph.c
 CLIENT_SOURCES = src/pipectl.c src/protocol.c src/util.c
 
 SERVER_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(SERVER_SOURCES))
 CLIENT_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(CLIENT_SOURCES))
 RACE_OBJ = $(patsubst src/%.c,$(BUILD)/race/%.o,$(SERVER_SOURCES))
+
+TESTS = $(BUILD)/test_protocol \
+        $(BUILD)/test_util \
+        $(BUILD)/test_busy \
+        $(BUILD)/test_cli \
+        $(BUILD)/test_graph \
+        $(BUILD)/test_yaml \
+        $(BUILD)/test_validator \
+        $(BUILD)/test_submit_yaml
 
 .PHONY: all test clean race FORCE
 
@@ -74,7 +82,7 @@ $(BUILD)/test_validator: tests/test_validator.c $(BUILD)/validator.o $(BUILD)/gr
 $(BUILD)/test_submit_yaml: tests/test_submit_yaml.c $(BUILD)/util.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli $(BUILD)/test_graph $(BUILD)/test_yaml $(BUILD)/test_validator $(BUILD)/test_submit_yaml
+test: all $(TESTS)
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
 	./$(BUILD)/test_busy
@@ -88,3 +96,4 @@ clean:
 	rm -rf $(BUILD) pipelined pipectl pipelined-race
 
 -include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
+
