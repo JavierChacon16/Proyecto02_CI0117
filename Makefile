@@ -1,5 +1,6 @@
 
 # Proyecto 2 - CI-0117
+# Servidor de pipelines concurrente
 
 CC = gcc
 
@@ -13,13 +14,35 @@ LDLIBS = -pthread -fopenmp -lyaml
 
 BUILD = build
 
-SERVER_SOURCES = src/pipelined.c src/server.c src/scheduler.c src/agents.c src/protocol.c src/util.c src/yaml_parser.c src/validator.c src/graph.c
+SERVER_SOURCES = src/pipelined.c \
+                 src/server.c \
+                 src/scheduler.c \
+                 src/agents.c \
+                 src/protocol.c \
+                 src/util.c \
+                 src/yaml_parser.c \
+                 src/validator.c \
+                 src/graph.c \
+                 src/script.c \
+                 src/tasks.c
 
 CLIENT_SOURCES = src/pipectl.c src/protocol.c src/util.c
 
 SERVER_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(SERVER_SOURCES))
 CLIENT_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(CLIENT_SOURCES))
 RACE_OBJ = $(patsubst src/%.c,$(BUILD)/race/%.o,$(SERVER_SOURCES))
+
+TESTS = $(BUILD)/test_protocol \
+        $(BUILD)/test_util \
+        $(BUILD)/test_busy \
+        $(BUILD)/test_cli \
+        $(BUILD)/test_graph \
+        $(BUILD)/test_yaml \
+        $(BUILD)/test_validator \
+        $(BUILD)/test_submit_yaml \
+        $(BUILD)/test_script \
+        $(BUILD)/test_tasks \
+        $(BUILD)/test_data
 
 .PHONY: all test clean race FORCE
 
@@ -77,7 +100,13 @@ $(BUILD)/test_submit_yaml: tests/test_submit_yaml.c $(BUILD)/util.o
 $(BUILD)/test_script: tests/test_script.c $(BUILD)/script.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli $(BUILD)/test_graph $(BUILD)/test_yaml $(BUILD)/test_validator $(BUILD)/test_submit_yaml $(BUILD)/test_script
+$(BUILD)/test_tasks: tests/test_tasks.c $(BUILD)/tasks.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_data: tests/test_data.c $(BUILD)/tasks.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+test: all $(TESTS)
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
 	./$(BUILD)/test_busy
@@ -87,6 +116,8 @@ test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/
 	./$(BUILD)/test_validator
 	./$(BUILD)/test_submit_yaml
 	./$(BUILD)/test_script
+	./$(BUILD)/test_tasks
+	./$(BUILD)/test_data
 
 clean:
 	rm -rf $(BUILD) pipelined pipectl pipelined-race
