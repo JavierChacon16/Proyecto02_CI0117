@@ -1,19 +1,22 @@
 
 
-# Proyecto 2 - CI-0117
 
+# Proyecto 2 - CI-0117
+# Servidor de pipelines concurrente
 
 CC = gcc
+
 STD ?= $(shell printf 'int main(void){return 0;}\n' | $(CC) -std=c23 -x c -fsyntax-only - >/dev/null 2>&1 && echo c23 || echo c2x)
 
 CFLAGS = -std=$(STD) -Wall -Wextra -pedantic -O2 -pthread -fopenmp
 CFLAGS += $(EXTRA)
+
 CPPFLAGS = -Iinclude
 LDLIBS = -pthread -fopenmp -lyaml
 
 BUILD = build
 
-SERVER_SOURCES = src/pipelined.c src/server.c src/scheduler.c src/agents.c src/protocol.c src/util.c
+SERVER_SOURCES = src/pipelined.c src/server.c src/scheduler.c src/agents.c src/protocol.c src/util.c src/yaml_parser.c
 CLIENT_SOURCES = src/pipectl.c src/protocol.c src/util.c
 
 SERVER_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(SERVER_SOURCES))
@@ -67,17 +70,19 @@ $(BUILD)/test_graph: tests/test_graph.c $(BUILD)/graph.o
 $(BUILD)/test_yaml: tests/test_yaml.c $(BUILD)/yaml_parser.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli $(BUILD)/test_graph $(BUILD)/test_yaml
+$(BUILD)/test_submit_yaml: tests/test_submit_yaml.c $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_busy $(BUILD)/test_cli $(BUILD)/test_graph $(BUILD)/test_yaml $(BUILD)/test_submit_yaml
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
 	./$(BUILD)/test_busy
 	./$(BUILD)/test_cli
 	./$(BUILD)/test_graph
 	./$(BUILD)/test_yaml
+	./$(BUILD)/test_submit_yaml
 
 clean:
-	rm -rf $(BUILD)
-	rm -f pipelined pipectl pipelined-race
+	rm -rf $(BUILD) pipelined pipectl pipelined-race
 
 -include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
-
