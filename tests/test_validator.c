@@ -1,17 +1,21 @@
 
 #include <stdio.h>
 #include <string.h>
+
 #include "validator.h"
 
-static int prueba(const char *nombre, const char *yaml, int valido)
+static int probar(const char *nombre, const char *yaml,
+                  int esperado)
 {
     char error[256];
 
     int resultado = validar_dependencias_yaml(
         yaml, strlen(yaml), error, sizeof error);
 
-    if ((resultado == 0) != valido) {
-        printf("Fallo: %s (%s)\n", nombre, error);
+    int correcto = (resultado == 0);
+
+    if (correcto != esperado) {
+        printf("Error en %s: %s\n", nombre, error);
         return 1;
     }
 
@@ -20,32 +24,46 @@ static int prueba(const char *nombre, const char *yaml, int valido)
 
 int main(void)
 {
-    const char *correcto =
-        "name: prueba\n"
+    int errores = 0;
+
+    const char *valido =
+        "name: ejemplo\n"
         "stages:\n"
-        "  - stage: preparar\n"
+        "  - stage: construir\n"
         "    jobs:\n"
         "      - job: compilar\n"
         "        steps:\n"
-        "          - script: echo hola\n"
-        "  - stage: probar\n"
-        "    dependsOn: preparar\n"
-        "    condition: succeeded()\n"
-        "    jobs:\n"
-        "      - job: unitarias\n"
+        "          - script: echo compilar\n"
+        "      - job: probar\n"
+        "        dependsOn: compilar\n"
+        "        condition: succeeded()\n"
         "        steps:\n"
-        "          - script: echo test\n";
-
-    const char *inexistente =
-        "name: prueba\n"
-        "stages:\n"
-        "  - stage: compilar\n"
-        "    dependsOn: otra\n"
+        "          - script: echo probar\n"
+        "  - stage: publicar\n"
+        "    condition: always()\n"
         "    jobs:\n"
-        "      - job: uno\n";
+        "      - job: guardar\n"
+        "        steps:\n"
+        "          - script: echo guardar\n";
 
-    const char *ciclo =
-        "name: prueba\n"
+    const char *etapa_inexistente =
+        "name: ejemplo\n"
+        "stages:\n"
+        "  - stage: construir\n"
+        "    dependsOn: inexistente\n"
+        "    jobs:\n"
+        "      - job: compilar\n";
+
+    const char *trabajo_inexistente =
+        "name: ejemplo\n"
+        "stages:\n"
+        "  - stage: construir\n"
+        "    jobs:\n"
+        "      - job: compilar\n"
+        "        dependsOn: otro\n";
+
+    const char *ciclo_etapas =
+        "name: ejemplo\n"
         "stages:\n"
         "  - stage: a\n"
         "    dependsOn: b\n"
@@ -56,64 +74,76 @@ int main(void)
         "    jobs:\n"
         "      - job: dos\n";
 
-    const char *condicion =
-        "name: prueba\n"
+    const char *ciclo_trabajos =
+        "name: ejemplo\n"
         "stages:\n"
-        "  - stage: compilar\n"
-        "    condition: cualquier()\n"
-        "    jobs:\n"
-        "      - job: uno\n";
-
-    const char *trabajo_inexistente =
-        "name: prueba\n"
-        "stages:\n"
-        "  - stage: compilar\n"
-        "    jobs:\n"
-        "      - job: probar\n"
-        "        dependsOn: otro\n";
-
-    const char *trabajos_ciclicos =
-        "name: prueba\n"
-        "stages:\n"
-        "  - stage: compilar\n"
+        "  - stage: construir\n"
         "    jobs:\n"
         "      - job: a\n"
         "        dependsOn: b\n"
         "      - job: b\n"
         "        dependsOn: a\n";
 
-    const char *independientes =
-        "name: prueba\n"
+    const char *condicion_invalida =
+        "name: ejemplo\n"
         "stages:\n"
-        "  - stage: compilar\n"
+        "  - stage: construir\n"
+        "    condition: incorrecta()\n"
+        "    jobs:\n"
+        "      - job: uno\n";
+
+    const char *dependencia_repetida =
+        "name: ejemplo\n"
+        "stages:\n"
+        "  - stage: construir\n"
         "    jobs:\n"
         "      - job: a\n"
         "      - job: b\n"
+        "        dependsOn: [a, a]\n";
+
+    const char *dependencia_propia =
+        "name: ejemplo\n"
+        "stages:\n"
+        "  - stage: construir\n"
+        "    jobs:\n"
+        "      - job: a\n"
+        "        dependsOn: a\n";
+
+    const char *sin_dependencias =
+        "name: ejemplo\n"
+        "stages:\n"
+        "  - stage: construir\n"
+        "    dependsOn: []\n"
+        "    jobs:\n"
+        "      - job: a\n"
         "        dependsOn: []\n"
-        "        condition: always()\n";
+        "      - job: b\n"
+        "        condition: failed()\n";
 
-    int errores = 0;
+    errores += probar("Pipeline valido", valido, 1);
+    errores += probar("Etapa inexistente",
+                     etapa_inexistente, 0);
+    errores += probar("Trabajo inexistente",
+                     trabajo_inexistente, 0);
+    errores += probar("Ciclo entre etapas",
+                     ciclo_etapas, 0);
+    errores += probar("Ciclo entre trabajos",
+                     ciclo_trabajos, 0);
+    errores += probar("Condicion invalida",
+                     condicion_invalida, 0);
+    errores += probar("Dependencia repetida",
+                     dependencia_repetida, 0);
+    errores += probar("Dependencia propia",
+                     dependencia_propia, 0);
+    errores += probar("Dependencias vacias",
+                     sin_dependencias, 1);
 
-    errores += prueba("Dependencias correctas",
-                      correcto, 1);
-    errores += prueba("Etapa inexistente",
-                      inexistente, 0);
-    errores += prueba("Ciclo entre etapas",
-                      ciclo, 0);
-    errores += prueba("Condicion invalida",
-                      condicion, 0);
-    errores += prueba("Trabajo inexistente",
-                      trabajo_inexistente, 0);
-    errores += prueba("Ciclo entre trabajos",
-                      trabajos_ciclicos, 0);
-    errores += prueba("Trabajos independientes",
-                      independientes, 1);
-
-    if (errores) {
-        printf("Fallaron %d pruebas de validacion\n", errores);
+    if (errores != 0) {
+        printf("Fallaron %d pruebas\n", errores);
         return 1;
     }
 
     puts("Pruebas de validacion: OK");
     return 0;
 }
+
