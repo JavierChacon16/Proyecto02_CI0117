@@ -1,50 +1,36 @@
 
-#define _POSIX_C_SOURCE 200809L
 
+#define _POSIX_C_SOURCE 200809L
 #include "state.h"
 #include "protocol.h"
 #include "util.h"
-#include "yaml_parser.h"
-#include "validator.h"
-
 #include <limits.h>
 #include <sched.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* A1 conserva la demostracion -DSIN_PROTECCION del contador de IDs.
+ * mu_id se toma siempre solo, nunca anidado en s->mu. */
 static int siguiente_id(servidor_t *s)
 {
 #ifndef SIN_PROTECCION
     pthread_mutex_lock(&s->mu_id);
 #endif
-
     unsigned int id = s->proximo_id;
-
 #ifdef SIN_PROTECCION
     sched_yield();
 #endif
-
-    if (id <= INT_MAX)
-        s->proximo_id = id + 1U;
-
+    if (id <= INT_MAX) s->proximo_id = id + 1U;
 #ifndef SIN_PROTECCION
     pthread_mutex_unlock(&s->mu_id);
 #endif
-
     return id <= INT_MAX ? (int)id : 0;
 }
 
-static void liberar_reserva(servidor_t *s, size_t bytes)
+static const char *estado_texto(estado_t st)
 {
-    pthread_mutex_lock(&s->mu);
-    --s->n_cola;
-    s->bytes_cola -= bytes;
-    pthread_mutex_unlock(&s->mu);
-}
-
-static const char *estado_texto(estado_t estado)
-{
-    switch (estado) {
+    switch (st) {
     case QUEUED: return "queued";
     case RUNNING: return "running";
     case SUCCEEDED: return "succeeded";
@@ -56,380 +42,103 @@ static const char *estado_texto(estado_t estado)
     return "failed";
 }
 
-static void nombre_provisional(ejecucion_t *e)
+static int terminal(estado_t st)
 {
-    strcpy(e->nombre, "sin_nombre");
-
-    const char *p = e->yaml;
-
-    while (*p) {
-        const char *fin = strchr(p, '\n');
-
-        if (!fin)
-            fin = p + strlen(p);
-
-        if (fin - p >= 5 && strncmp(p, "name:", 5) == 0) {
-            const char *v = p + 5;
-
-            while (v < fin && (*v == ' ' || *v == '\t'))
-                ++v;
-
-            while (fin > v &&
-                   (fin[-1] == ' ' || fin[-1] == '\r'))
-                --fin;
-
-            if (fin - v >= 2 &&
-                ((*v == '"' && fin[-1] == '"') ||
-                 (*v == '\'' && fin[-1] == '\''))) {
-                ++v;
-                --fin;
-            }
-
-            size_t n = (size_t)(fin - v);
-
-            if (n && n < sizeof e->nombre) {
-                memcpy(e->nombre, v, n);
-                e->nombre[n] = '\0';
-            }
-
-            return;
-        }
-
-        p = *fin ? fin + 1 : fin;
-    }
+    return st != QUEUED && st != RUNNING;
 }
 
-static void drenar_payload(cliente_t *c, size_t bytes)
-{
-    char descarte[8192];
-
-    while (bytes > 0) {
-        size_t n = bytes < sizeof descarte
-                   ? bytes : sizeof descarte;
-
-        if (nu_read_all_until(c->fd, descarte, n,
-                              &c->vencimiento) != 0)
-            break;
-
-        bytes -= n;
-    }
-}
-
-static int responder_invalido(int fd, const char *mensaje)
-{
-    char respuesta[PROTO_MAX_RESPONSE_LINE];
-
-    if (protocol_format_invalid(respuesta,
-                                sizeof respuesta, 1) < 0 ||
-        nu_send_response(fd, respuesta) != 0)
-        return -1;
-
-    if (protocol_format_invalid_item(
-            respuesta, sizeof respuesta,
-            "yaml", mensaje) < 0 ||
-        nu_send_response(fd, respuesta) != 0)
-        return -1;
-
-    if (protocol_format_end(respuesta,
-                            sizeof respuesta) < 0)
-        return -1;
-
-    return nu_send_response(fd, respuesta);
-}
-
+/* TODO A2: leer YAML, llamar parsear_pipeline_yaml(), obtener ID,
+ * preparar workspaces/logs/vars/artifacts y motor_encolar_ejecucion().
+ * En A1 una solicitud bien formada siempre devuelve ERR INTERNAL.
+ * Conservamos drenaje y comportamiento BUSY para evitar resets TCP y para
+ * que los tests historicos de limite de recursos sigan siendo relevantes. */
 int submit(cliente_t *c, size_t bytes)
 {
+    if (!c || !c->servidor || bytes == 0) return -1;
     servidor_t *s = c->servidor;
-
     pthread_mutex_lock(&s->mu);
-
-    int cerrado = s->apagar;
-    int lleno = s->n_cola >= MAX_COLA ||
-                bytes > MAX_BYTES_COLA - s->bytes_cola;
-
-    if (!cerrado && !lleno) {
-        ++s->n_cola;
-        s->bytes_cola += bytes;
-    }
-
+    int apagar = s->apagar;
+    int ocupado = s->n_cola >= MAX_COLA ||
+                  bytes > MAX_BYTES_COLA - s->bytes_cola;
     pthread_mutex_unlock(&s->mu);
-
-    if (cerrado)
-        return error_cliente(c->fd, ERR_INVALID_STATE,
-                             "servidor cerrado");
-
-    if (lleno) {
-        int rc = error_cliente(c->fd, "BUSY",
-                               "limite de cola o bytes YAML");
-
-        if (rc == 0)
-            drenar_payload(c, bytes);
-
-        return rc;
+    if (apagar) return error_cliente(c->fd, ERR_INVALID_STATE, "servidor cerrado");
+    if (ocupado) {
+        int rc = error_cliente(c->fd, "BUSY", "limite de cola o bytes YAML");
+        if (rc != 0) return rc;
     }
-
-    ejecucion_t *e = calloc(1, sizeof *e);
-
-    if (e)
-        e->yaml = malloc(bytes + 1);
-
-    if (!e || !e->yaml) {
-        free(e);
-        liberar_reserva(s, bytes);
-
-        return error_cliente(c->fd, "INTERNAL", "sin memoria");
+    char buffer[8192];
+    size_t restante = bytes;
+    while (restante) {
+        size_t n = restante < sizeof buffer ? restante : sizeof buffer;
+        if (nu_read_all_until(c->fd, buffer, n, &c->vencimiento) != 0)
+            return ocupado ? 0 : -1; /* drenaje BUSY best-effort */
+        restante -= n;
     }
-
-    int lectura = nu_read_all_until(
-        c->fd, e->yaml, bytes, &c->vencimiento);
-
-    if (lectura != 0 || memchr(e->yaml, '\0', bytes)) {
-        free(e->yaml);
-        free(e);
-        liberar_reserva(s, bytes);
-
-        return error_cliente(
-            c->fd,
-            lectura == NU_TIMEOUT ? "TIMEOUT" : ERR_BAD_REQUEST,
-            "payload incompleto, vencido o con NUL"
-        );
-    }
-
-    e->yaml[bytes] = '\0';
-    e->bytes = bytes;
-
-    char error_yaml[256];
-
-    int valido = validar_yaml(
-        e->yaml, bytes, error_yaml, sizeof error_yaml);
-
-    if (valido == 0) {
-        valido = validar_dependencias_yaml(
-            e->yaml, bytes, error_yaml, sizeof error_yaml);
-    }
-
-    if (valido != 0) {
-        free(e->yaml);
-        free(e);
-        liberar_reserva(s, bytes);
-
-        return responder_invalido(c->fd, error_yaml);
-    }
-
-    nombre_provisional(e);
-    e->id = siguiente_id(s);
-
-    pthread_mutex_lock(&s->mu);
-
-    if (s->apagar || e->id == 0) {
-        --s->n_cola;
-        s->bytes_cola -= bytes;
-
-        pthread_mutex_unlock(&s->mu);
-
-        free(e->yaml);
-        free(e);
-
-        return error_cliente(
-            c->fd, ERR_INVALID_STATE,
-            "servidor cerrado o IDs agotados"
-        );
-    }
-
-    e->estado = QUEUED;
-    e->siguiente = s->ejecuciones;
-    s->ejecuciones = e;
-
-    if (s->ultimo)
-        s->ultimo->cola = e;
-    else
-        s->primero = e;
-
-    s->ultimo = e;
-
-    int id = e->id;
-
-    pthread_cond_broadcast(&s->cambio);
-    pthread_mutex_unlock(&s->mu);
-
-    char respuesta[PROTO_MAX_RESPONSE_LINE];
-
-    if (protocol_format_ok(respuesta,
-                           sizeof respuesta, id) < 0)
-        return -1;
-
-    return nu_send_response(c->fd, respuesta);
+    (void)siguiente_id;
+    return ocupado ? 0 : error_cliente(c->fd, "INTERNAL", "no implementado");
 }
 
-static long long duracion(const ejecucion_t *e)
+static long long duracion(estado_t estado, const struct timespec *inicio,
+                          const struct timespec *fin)
 {
-    if (e->estado == QUEUED || e->estado == CANCELED)
-        return 0;
-
-    struct timespec fin = e->fin;
-
-    if (e->estado == RUNNING)
-        clock_gettime(CLOCK_MONOTONIC, &fin);
-
-    return (long long)(fin.tv_sec - e->inicio.tv_sec) * 1000 +
-           (fin.tv_nsec - e->inicio.tv_nsec) / 1000000;
+    if (inicio->tv_sec == 0 && inicio->tv_nsec == 0) return 0;
+    struct timespec cierre = *fin;
+    if (!terminal(estado)) (void)clock_gettime(CLOCK_MONOTONIC, &cierre);
+    return (long long)(cierre.tv_sec - inicio->tv_sec) * 1000 +
+           (cierre.tv_nsec - inicio->tv_nsec) / 1000000;
 }
 
+typedef struct {
+    int id;
+    estado_t estado;
+    char nombre[128];
+    long long ms;
+} fila_t;
+
+/* Snapshot bajo mu, IO fuera de mu. A1 devuelve resumen de ejecuciones;
+ * TODO A2: snapshot de etapas, trabajos y pasos y LOGS --follow. */
 int consultar(cliente_t *c, int id, int lista)
 {
+    if (!c || !c->servidor) return -1;
     servidor_t *s = c->servidor;
     char linea[PROTO_MAX_RESPONSE_LINE];
-
-    typedef struct {
-        int id;
-        estado_t estado;
-        char nombre[128];
-        long long ms;
-    } fila_t;
-
     pthread_mutex_lock(&s->mu);
-
     size_t n = 0;
-
-    for (ejecucion_t *e = s->ejecuciones;
-         e; e = e->siguiente) {
-        if (lista || e->id == id)
-            ++n;
-    }
-
+    for (ejecucion_t *e = s->ejecuciones; e; e = e->siguiente)
+        if (lista || e->id == id) ++n;
     fila_t *filas = n ? calloc(n, sizeof *filas) : NULL;
-
     if (n && !filas) {
         pthread_mutex_unlock(&s->mu);
         return error_cliente(c->fd, "INTERNAL", "sin memoria");
     }
-
-    size_t i = 0;
-
-    for (ejecucion_t *e = s->ejecuciones;
-         e; e = e->siguiente) {
-        if (!lista && e->id != id)
-            continue;
-
-        filas[i].id = e->id;
-        filas[i].estado = e->estado;
-
-        memcpy(filas[i].nombre, e->nombre,
-               sizeof e->nombre);
-
-        filas[i++].ms = duracion(e);
+    size_t k = 0;
+    for (ejecucion_t *e = s->ejecuciones; e; e = e->siguiente) {
+        if (!lista && e->id != id) continue;
+        filas[k].id = e->id;
+        filas[k].estado = e->estado;
+        snprintf(filas[k].nombre, sizeof filas[k].nombre, "%s",
+                 e->nombre ? e->nombre : "sin_nombre");
+        filas[k].ms = duracion(e->estado, &e->inicio, &e->fin);
+        ++k;
     }
-
     pthread_mutex_unlock(&s->mu);
-
-    if (!lista && !n)
-        return error_cliente(c->fd, "NOT_FOUND",
-                             "ID inexistente");
-
+    if (!lista && n == 0)
+        return error_cliente(c->fd, "NOT_FOUND", "ID inexistente");
     int rc = 0;
-
     if (lista) {
-        rc = protocol_format_list(
-            linea, sizeof linea, (int)n);
-
-        if (rc >= 0)
-            rc = nu_send_response(c->fd, linea);
+        rc = protocol_format_list(linea, sizeof linea, (int)n);
+        if (rc >= 0) rc = nu_send_response(c->fd, linea);
     }
-
-    for (i = 0; i < n && rc >= 0; i++) {
-        if (lista) {
-            rc = protocol_format_run(
-                linea, sizeof linea,
-                filas[i].id,
-                estado_texto(filas[i].estado),
-                filas[i].nombre
-            );
-        } else {
-            rc = protocol_format_status(
-                linea, sizeof linea,
-                filas[i].id,
-                estado_texto(filas[i].estado),
-                filas[i].ms
-            );
-        }
-
-        if (rc >= 0)
-            rc = nu_send_response(c->fd, linea);
+    for (size_t i = 0; i < n && rc >= 0; ++i) {
+        if (lista)
+            rc = protocol_format_run(linea, sizeof linea, filas[i].id,
+                      estado_texto(filas[i].estado), filas[i].nombre);
+        else
+            rc = protocol_format_status(linea, sizeof linea, filas[i].id,
+                      estado_texto(filas[i].estado), filas[i].ms);
+        if (rc >= 0) rc = nu_send_response(c->fd, linea);
     }
-
     free(filas);
-
-    if (rc < 0 ||
-        protocol_format_end(linea, sizeof linea) < 0)
-        return -1;
-
+    if (rc < 0 || protocol_format_end(linea, sizeof linea) < 0) return -1;
     return nu_send_response(c->fd, linea);
-}
-
-int cancelar_ejecucion(cliente_t *c, int id)
-{
-    servidor_t *s = c->servidor;
-    pthread_mutex_lock(&s->mu);
-    ejecucion_t *e = s->ejecuciones;
-    ejecucion_t *encontrado = NULL;
-
-    while (e) {
-        if (e->id == id) {
-            encontrado = e;
-            break;
-        }
-        e = e->siguiente;
-    }
-
-    if (!encontrado) {
-        pthread_mutex_unlock(&s->mu);
-        return error_cliente(c->fd, "NOT_FOUND", "ID de ejecucion inexistente");
-    }
-
-    
-    if (encontrado->estado == SUCCEEDED || encontrado->estado == PARTIALLY_SUCCEEDED ||
-        encontrado->estado == FAILED || encontrado->estado == CANCELED || 
-        encontrado->estado == SKIPPED) {
-        pthread_mutex_unlock(&s->mu);
-        return error_cliente(c->fd, ERR_INVALID_STATE, "La ejecucion ya ha finalizado o no esta activa");
-    }
-
-    // Si estaba en cola (QUEUED), lo removemos de la cola de pendientes y ajustamos contadores
-    if (encontrado->estado == QUEUED) {
-        // Buscar y remover de la lista enlazada de pendientes (primero/cola)
-        if (s->primero == encontrado) {
-            s->primero = encontrado->cola;
-        } else {
-            ejecucion_t *act = s->primero;
-            while (act && act->cola != encontrado)
-                act = act->cola;
-            if (act)
-                act->cola = encontrado->cola;
-        }
-        if (s->ultimo == encontrado) {
-            // Recalcular el ultimo
-            ejecucion_t *act = s->primero;
-            while (act && act->cola)
-                act = act->cola;
-            s->ultimo = act;
-        }
-
-        --s->n_cola;
-        s->bytes_cola -= encontrado->bytes;
-        free(encontrado->yaml);
-        encontrado->yaml = NULL;
-    }
-
-    // Cambiar estado a CANCELED
-    encontrado->estado = CANCELED;
-    clock_gettime(CLOCK_MONOTONIC, &encontrado->fin);
-
-    pthread_cond_broadcast(&s->cambio);
-    pthread_mutex_unlock(&s->mu);
-
-    char respuesta[PROTO_MAX_RESPONSE_LINE];
-    if (protocol_format_ok(respuesta, sizeof respuesta, id) < 0)
-        return -1;
-
-    return nu_send_response(c->fd, respuesta);
 }
