@@ -1,48 +1,138 @@
 
 # Proyecto 2 - CI-0117
 
+
 CC = gcc
-CFLAGS = -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp -Iinclude
+
+STD ?= $(shell printf 'int main(void){return 0;}\n' | $(CC) -std=c23 -x c -fsyntax-only - >/dev/null 2>&1 && echo c23 || echo c2x)
+
+CFLAGS = -std=$(STD) -Wall -Wextra -pedantic -O2 -pthread -fopenmp
+CFLAGS += $(EXTRA)
+
+CPPFLAGS = -Iinclude
+LDLIBS = -pthread -fopenmp -lyaml -lm
 
 BUILD = build
-OBJ = $(BUILD)/protocol.o $(BUILD)/util.o
 
-.PHONY: all test clean
+SERVER_SOURCES = src/pipelined.c \
+                 src/server.c \
+                 src/scheduler.c \
+                 src/agents.c \
+                 src/protocol.c \
+                 src/util.c \
+                 src/yaml_parser.c \
+                 src/validator.c \
+                 src/graph.c \
+                 src/script.c \
+                 src/tasks.c
 
-all: $(BUILD)/pipelined $(BUILD)/pipectl
+CLIENT_SOURCES = src/pipectl.c src/protocol.c src/util.c
 
-$(BUILD):
-	mkdir -p $(BUILD)
+SERVER_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(SERVER_SOURCES))
+CLIENT_OBJ = $(patsubst src/%.c,$(BUILD)/%.o,$(CLIENT_SOURCES))
+RACE_OBJ = $(patsubst src/%.c,$(BUILD)/race/%.o,$(SERVER_SOURCES))
 
-$(BUILD)/protocol.o: src/protocol.c include/protocol.h | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+TESTS = $(BUILD)/test_protocol \
+        $(BUILD)/test_util \
+        $(BUILD)/test_busy \
+        $(BUILD)/test_cli \
+        $(BUILD)/test_graph \
+        $(BUILD)/test_yaml \
+        $(BUILD)/test_validator \
+        $(BUILD)/test_submit_yaml \
+        $(BUILD)/test_script \
+        $(BUILD)/test_tasks \
+        $(BUILD)/test_data \
+        $(BUILD)/test_model
 
-$(BUILD)/util.o: src/util.c include/util.h | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+.PHONY: all test clean race FORCE
 
-$(BUILD)/pipelined: src/pipelined.c $(OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+all: pipelined pipectl
 
-$(BUILD)/pipectl: src/pipectl.c $(OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+pipelined: $(SERVER_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-$(BUILD)/test_protocol: tests/test_protocol.c $(BUILD)/protocol.o
-	$(CC) $(CFLAGS) $^ -o $@
+pipectl: $(CLIENT_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/%.o: src/%.c $(BUILD)/flags
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/race/%.o: src/%.c $(BUILD)/flags
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DSIN_PROTECCION -MMD -MP -c $< -o $@
+
+$(BUILD)/flags: FORCE
+	@mkdir -p $(BUILD)
+	@printf '%s\n' '$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(LDLIBS)' > $@.tmp
+	@cmp -s $@.tmp $@ || cp $@.tmp $@
+	@rm -f $@.tmp
+
+race: pipelined-race
+
+pipelined-race: $(RACE_OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_protocol: tests/test_protocol.c $(BUILD)/protocol.o $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_util: tests/test_util.c $(BUILD)/util.o
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-$(BUILD)/test_integration: tests/test_integration.c $(BUILD)/util.o
-	$(CC) $(CFLAGS) $^ -o $@
+$(BUILD)/test_busy: tests/test_busy.c $(filter-out $(BUILD)/pipelined.o,$(SERVER_OBJ))
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-test: all $(BUILD)/test_protocol $(BUILD)/test_util $(BUILD)/test_integration
+$(BUILD)/test_cli: tests/test_cli.c $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_graph: tests/test_graph.c $(BUILD)/graph.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_yaml: tests/test_yaml.c $(BUILD)/yaml_parser.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_validator: tests/test_validator.c $(BUILD)/validator.o $(BUILD)/graph.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_submit_yaml: tests/test_submit_yaml.c $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_script: tests/test_script.c $(BUILD)/script.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_tasks: tests/test_tasks.c $(BUILD)/tasks.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_data: tests/test_data.c $(BUILD)/tasks.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+# Compilacion independiente: no necesita libyaml.
+$(BUILD)/test_model: tests/test_model.c $(BUILD)/model.o $(BUILD)/script.o $(BUILD)/tasks.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -pthread -fopenmp -lm -o $@
+
+.PHONY: test-model
+test-model: $(BUILD)/test_model
+	./$(BUILD)/test_model
+
+test: all $(TESTS)
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
-	./$(BUILD)/test_integration
+	./$(BUILD)/test_busy
+	./$(BUILD)/test_cli
+	./$(BUILD)/test_graph
+	./$(BUILD)/test_yaml
+	./$(BUILD)/test_validator
+	./$(BUILD)/test_submit_yaml
+	./$(BUILD)/test_script
+	./$(BUILD)/test_tasks
+	./$(BUILD)/test_data
+	./$(BUILD)/test_model
 
 clean:
-	rm -rf $(BUILD)
+	rm -rf $(BUILD) pipelined pipectl pipelined-race
+
+-include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
 
 
 
-	
