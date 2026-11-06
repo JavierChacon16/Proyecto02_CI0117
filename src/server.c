@@ -55,16 +55,26 @@ static void atender(cliente_t *c)
         return;
     }
     switch (req.type) {
-    case CMD_SUBMIT: submit(c, req.data.submit.yaml_len); break;
-    case CMD_LIST: consultar(c, 0, 1); break;
-    case CMD_STATUS: consultar(c, req.data.status.id, 0); break;
+    case CMD_SUBMIT:
+        submit(c, req.data.submit.yaml_len);
+        break;
+    case CMD_LIST:
+        consultar(c, 0, 1);
+        break;
+    case CMD_STATUS:
+        consultar(c, req.data.status.id, 0);
+        break;
+    case CMD_CANCEL:
+        cancelar_ejecucion(c, req.data.cancel.id);
+        break;
     case CMD_SHUTDOWN:
-        /* Primero confirmar; el hilo principal cerrara las conexiones. */
         if (protocol_format_bye(linea, sizeof linea) >= 0)
             nu_send_response(c->fd, linea);
         solicitar_apagado(c->servidor);
         break;
-    default: error_cliente(c->fd, ERR_INVALID_STATE, "comando aun no implementado");
+    default:
+        error_cliente(c->fd, ERR_INVALID_STATE, "comando aun no implementado");
+        break;
     }
 }
 

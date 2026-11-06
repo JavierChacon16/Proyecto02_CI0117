@@ -52,5 +52,5 @@ int submit(cliente_t *c, size_t bytes);
 int consultar(cliente_t *c, int id, int lista);
 void *planificar(void *arg);
 int iniciar_servidor(int puerto, int agentes, const char *directorio);
-
+int cancelar_ejecucion(cliente_t *c, int id);
 #endif
