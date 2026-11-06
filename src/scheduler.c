@@ -1,4 +1,5 @@
 
+
 #define _POSIX_C_SOURCE 200809L
 #include "state.h"
 #include "protocol.h"
@@ -140,72 +141,4 @@ int consultar(cliente_t *c, int id, int lista)
     free(filas);
     if (rc < 0 || protocol_format_end(linea, sizeof linea) < 0) return -1;
     return nu_send_response(c->fd, linea);
-}
-
-int cancelar_ejecucion(cliente_t *c, int id)
-{
-    servidor_t *s = c->servidor;
-    pthread_mutex_lock(&s->mu);
-    ejecucion_t *e = s->ejecuciones;
-    ejecucion_t *encontrado = NULL;
-
-    while (e) {
-        if (e->id == id) {
-            encontrado = e;
-            break;
-        }
-        e = e->siguiente;
-    }
-
-    if (!encontrado) {
-        pthread_mutex_unlock(&s->mu);
-        return error_cliente(c->fd, "NOT_FOUND", "ID de ejecucion inexistente");
-    }
-
-    
-    if (encontrado->estado == SUCCEEDED || encontrado->estado == PARTIALLY_SUCCEEDED ||
-        encontrado->estado == FAILED || encontrado->estado == CANCELED || 
-        encontrado->estado == SKIPPED) {
-        pthread_mutex_unlock(&s->mu);
-        return error_cliente(c->fd, ERR_INVALID_STATE, "La ejecucion ya ha finalizado o no esta activa");
-    }
-
-    // Si estaba en cola (QUEUED), lo removemos de la cola de pendientes y ajustamos contadores
-    if (encontrado->estado == QUEUED) {
-        // Buscar y remover de la lista enlazada de pendientes (primero/cola)
-        if (s->primero == encontrado) {
-            s->primero = encontrado->cola;
-        } else {
-            ejecucion_t *act = s->primero;
-            while (act && act->cola != encontrado)
-                act = act->cola;
-            if (act)
-                act->cola = encontrado->cola;
-        }
-        if (s->ultimo == encontrado) {
-            // Recalcular el ultimo
-            ejecucion_t *act = s->primero;
-            while (act && act->cola)
-                act = act->cola;
-            s->ultimo = act;
-        }
-
-        --s->n_cola;
-        s->bytes_cola -= encontrado->bytes;
-        free(encontrado->yaml);
-        encontrado->yaml = NULL;
-    }
-
-    // Cambiar estado a CANCELED
-    encontrado->estado = CANCELED;
-    clock_gettime(CLOCK_MONOTONIC, &encontrado->fin);
-
-    pthread_cond_broadcast(&s->cambio);
-    pthread_mutex_unlock(&s->mu);
-
-    char respuesta[PROTO_MAX_RESPONSE_LINE];
-    if (protocol_format_ok(respuesta, sizeof respuesta, id) < 0)
-        return -1;
-
-    return nu_send_response(c->fd, respuesta);
 }
