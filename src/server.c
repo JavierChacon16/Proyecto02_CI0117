@@ -1,4 +1,5 @@
 
+
 #define _POSIX_C_SOURCE 200809L
 #include "state.h"
 #include "motor.h"
@@ -67,12 +68,13 @@ static void atender(cliente_t *c)
     }
     case CMD_STATUS: consultar(c, req.data.status.id, 0); break;
     case CMD_SHUTDOWN:
-        /* Primero confirmar; el hilo principal cerrara las conexiones. */
         if (protocol_format_bye(linea, sizeof linea) >= 0)
             nu_send_response(c->fd, linea);
         motor_solicitar_apagado(c->servidor);
         break;
-    default: error_cliente(c->fd, ERR_INVALID_STATE, "comando aun no implementado");
+    default:
+        error_cliente(c->fd, ERR_INVALID_STATE, "comando aun no implementado");
+        break;
     }
 }
 

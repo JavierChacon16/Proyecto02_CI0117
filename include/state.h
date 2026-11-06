@@ -1,3 +1,4 @@
+
 #ifndef STATE_H
 #define STATE_H
 
@@ -118,14 +119,18 @@ typedef struct {
 int error_cliente(int fd, const char *codigo, const char *mensaje);
 int submit(cliente_t *c, size_t bytes);
 int consultar(cliente_t *c, int id, int lista);
+
 /* Referencia vacia = logs de la ejecucion; trabajo o etapa/trabajo.
  * Si nombre simple identifica mas de un trabajo: ERR AMBIGUOUS. */
 int consultar_logs(cliente_t *c, int id, const char *referencia, int follow);
+
 /* Devuelve solo los valores declarados por cancelacion_resultado_t. */
 int cancelar_ejecucion(servidor_t *s, int id);
+
 void *planificar(void *arg);
 int iniciar_servidor(int puerto, int agentes, const char *directorio);
 int iniciar_servidor_configurado(const servidor_config_t *config);
 
 #endif
+
 

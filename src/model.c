@@ -1,9 +1,9 @@
 
-
 #define _POSIX_C_SOURCE 200809L
 #include "model.h"
 #include "script.h"
 #include "tasks.h"
+#include "state.h"
 
 #include <math.h>
 #include <omp.h>
@@ -21,8 +21,8 @@ static double ahora(void)
 
 static int completo(estado_trabajo_t e)
 {
-    return e == TRABAJO_CORRECTO || e == TRABAJO_PARCIAL ||
-           e == TRABAJO_FALLIDO || e == TRABAJO_OMITIDO;
+    return e == SUCCEEDED || e == PARTIALLY_SUCCEEDED ||
+           e == FAILED || e == SKIPPED;
 }
 
 /* Valida indices y ciclos antes de iniciar cualquier paso. */
@@ -57,14 +57,14 @@ static int validar_plan(const plan_trabajos_t *plan)
             if (visitados[i])
                 continue;
             const trabajo_t *t = &plan->trabajos[i];
-            int disponible = 1;
+            int disponible_flag = 1;
             for (size_t j = 0; j < t->cantidad_dependencias; ++j) {
                 if (!visitados[t->dependencias[j]]) {
-                    disponible = 0;
+                    disponible_flag = 0;
                     break;
                 }
             }
-            if (disponible) {
+            if (disponible_flag) {
                 visitados[i] = 1;
                 ++completados;
                 avance = 1;
@@ -79,21 +79,27 @@ static int validar_plan(const plan_trabajos_t *plan)
     return 0;
 }
 
-/* Usar solo dentro de la region critica OpenMP. */
+/* Evalúa disponibilidad y condiciones (succeeded(), failed(), always()). */
 static int disponible(const plan_trabajos_t *plan, size_t id,
                       int *omitir)
 {
     const trabajo_t *t = &plan->trabajos[id];
     int fallaron = 0;
     for (size_t i = 0; i < t->cantidad_dependencias; ++i) {
-        estado_trabajo_t e = plan->trabajos[t->dependencias[i]].estado;
+        estado_t e = plan->trabajos[t->dependencias[i]].estado;
         if (!completo(e))
             return 0;
-        if (e == TRABAJO_FALLIDO || e == TRABAJO_OMITIDO)
+        if (e == FAILED || e == SKIPPED)
             fallaron = 1;
     }
-    *omitir = (t->condicion == COND_SUCCEEDED && fallaron) ||
-              (t->condicion == COND_FAILED && !fallaron);
+    
+    if (t->condicion == COND_ALWAYS) {
+        *omitir = 0;
+    } else if (t->condicion == COND_FAILED) {
+        *omitir = !fallaron;
+    } else { /* COND_SUCCEEDED por defecto */
+        *omitir = fallaron;
+    }
     return 1;
 }
 
@@ -119,23 +125,21 @@ static int ejecutar_paso(const paso_t *p, unsigned limite,
     return -1;
 }
 
-static estado_trabajo_t ejecutar_trabajo(trabajo_t *t)
+static estado_t ejecutar_trabajo(trabajo_t *t)
 {
     double inicio = ahora();
     if (inicio < 0)
-        return TRABAJO_FALLIDO;
+        return FAILED;
 
     int parcial = 0;
     for (size_t i = 0; i < t->cantidad_pasos; ++i) {
         if (t->cancelar && atomic_load(t->cancelar))
-            return TRABAJO_FALLIDO;
+            return CANCELED;
         unsigned limite = 0;
         if (t->timeout_segundos) {
             double tiempo = ahora() - inicio;
             if (tiempo < 0 || tiempo >= (double)t->timeout_segundos)
-                return TRABAJO_FALLIDO;
-            /* Redondear hacia arriba para que el subproceso no reciba 0,
-               que en ejecutar_script significa sin limite. */
+                return FAILED;
             limite = (unsigned)ceil((double)t->timeout_segundos - tiempo);
             if (limite == 0)
                 limite = 1;
@@ -145,15 +149,15 @@ static estado_trabajo_t ejecutar_trabajo(trabajo_t *t)
                                       &t->resultado_cpu, t->cancelar);
         if (t->timeout_segundos &&
             ahora() - inicio >= (double)t->timeout_segundos)
-            return TRABAJO_FALLIDO;
+            return FAILED;
 
         if (resultado != 0) {
             if (!t->pasos[i].continuar_si_falla)
-                return TRABAJO_FALLIDO;
+                return FAILED;
             parcial = 1;
         }
     }
-    return parcial ? TRABAJO_PARCIAL : TRABAJO_CORRECTO;
+    return parcial ? PARTIALLY_SUCCEEDED : SUCCEEDED;
 }
 
 int ejecutar_plan(plan_trabajos_t *plan, int agentes)
@@ -163,7 +167,7 @@ int ejecutar_plan(plan_trabajos_t *plan, int agentes)
         return -1;
 
     for (size_t i = 0; i < plan->cantidad; ++i) {
-        plan->trabajos[i].estado = TRABAJO_PENDIENTE;
+        plan->trabajos[i].estado = QUEUED;
         plan->trabajos[i].resultado_cpu = 0;
     }
 
@@ -185,18 +189,17 @@ int ejecutar_plan(plan_trabajos_t *plan, int agentes)
                 } else {
                     for (size_t i = 0; i < plan->cantidad; ++i) {
                         trabajo_t *t = &plan->trabajos[i];
-                        if (t->estado != TRABAJO_PENDIENTE)
+                        if (t->estado != QUEUED)
                             continue;
                         int omitir = 0;
                         if (!disponible(plan, i, &omitir))
                             continue;
                         if (omitir) {
-                            t->estado = TRABAJO_OMITIDO;
+                            t->estado = SKIPPED;
                             --restantes;
-                            fallo = 1;
                             continue;
                         }
-                        t->estado = TRABAJO_EN_CURSO;
+                        t->estado = RUNNING;
                         ++activos;
                         elegido = i;
                         break;
@@ -211,19 +214,18 @@ int ejecutar_plan(plan_trabajos_t *plan, int agentes)
                 continue;
             }
 
-            estado_trabajo_t resultado = ejecutar_trabajo(
+            estado_t resultado = ejecutar_trabajo(
                 &plan->trabajos[elegido]);
             #pragma omp critical(planificador_trabajos)
             {
                 plan->trabajos[elegido].estado = resultado;
                 --restantes;
                 --activos;
-                if (resultado == TRABAJO_FALLIDO ||
-                    resultado == TRABAJO_PARCIAL)
+                if (resultado == FAILED ||
+                    resultado == PARTIALLY_SUCCEEDED)
                     fallo = 1;
             }
         }
     }
     return fallo ? -1 : 0;
 }
-
