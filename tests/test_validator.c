@@ -117,8 +117,12 @@ int main(void)
         "    jobs:\n"
         "      - job: a\n"
         "        dependsOn: []\n"
+        "        steps:\n"
+        "          - script: echo uno\n"
         "      - job: b\n"
-        "        condition: failed()\n";
+        "        condition: failed()\n"
+        "        steps:\n"
+        "          - script: echo dos\n";
 
     errores += probar("Pipeline valido", valido, 1);
     errores += probar("Etapa inexistente",
