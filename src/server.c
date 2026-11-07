@@ -52,6 +52,7 @@ static void atender(cliente_t *c)
     switch (req.type) {
     case CMD_SUBMIT: submit(c, req.data.submit.yaml_len); break;
     case CMD_LIST: consultar(c, 0, 1); break;
+    
     case CMD_CANCEL: {
         int resultado = cancelar_ejecucion(c->servidor, req.data.cancel.id);
         if (resultado == CANCELAR_OK) {
