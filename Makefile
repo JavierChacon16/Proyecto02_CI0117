@@ -1,4 +1,3 @@
-
 # Proyecto 2 - CI-0117
 
 
@@ -14,7 +13,8 @@ LDLIBS = -pthread -fopenmp -lm
 
 BUILD = build
 
-# Fase 1: parser propio y modelo v2. El servidor compila todos los
+# Fases 1 y 2: parser propio, modelo v2 y ejecutores cancelables.
+# El servidor compila todos los
 # modulos implementados, aunque SUBMIT seguira pendiente hasta la Fase 4.
 # vars/artifacts/logs estan vacios y -pedantic -Werror los rechaza:
 # se agregaran en la Fase 3, sin tocar ahora codigo ajeno a Fase 1.
@@ -43,7 +43,9 @@ TESTS = $(BUILD)/test_protocol \
         $(BUILD)/test_cli \
         $(BUILD)/test_graph \
         $(BUILD)/test_script \
+        $(BUILD)/test_script_capturado \
         $(BUILD)/test_tasks \
+        $(BUILD)/test_tasks_controladas \
         $(BUILD)/test_data \
         $(BUILD)/test_motor \
         $(BUILD)/test_yaml \
@@ -102,6 +104,12 @@ $(BUILD)/test_validator: tests/test_validator.c $(BUILD)/validator.o $(BUILD)/ya
 $(BUILD)/test_submit_yaml: tests/test_submit_yaml.c $(BUILD)/util.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
+$(BUILD)/test_script_capturado: tests/test_script_capturado.c $(BUILD)/script.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_tasks_controladas: tests/test_tasks_controladas.c $(BUILD)/tasks.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
 $(BUILD)/test_script: tests/test_script.c $(BUILD)/script.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
@@ -128,7 +136,9 @@ test: all $(TESTS)
 	./$(BUILD)/test_cli
 	./$(BUILD)/test_graph
 	./$(BUILD)/test_script
+	./$(BUILD)/test_script_capturado
 	./$(BUILD)/test_tasks
+	./$(BUILD)/test_tasks_controladas
 	./$(BUILD)/test_data
 	./$(BUILD)/test_motor
 	./$(BUILD)/test_yaml
@@ -138,6 +148,9 @@ clean:
 	rm -rf $(BUILD) pipelined pipectl pipelined-race
 
 -include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
+
+
+
 
 
 
