@@ -14,14 +14,22 @@ LDLIBS = -pthread -fopenmp -lm
 
 BUILD = build
 
-# A1: SUBMIT es ERR INTERNAL y no enlaza parser, validator ni tasks.
-# El entorno de prueba carece de libyaml-dev. Volver a incluirlos en A2.
+# Fase 1: parser propio y modelo v2. El servidor compila todos los
+# modulos implementados, aunque SUBMIT seguira pendiente hasta la Fase 4.
+# vars/artifacts/logs estan vacios y -pedantic -Werror los rechaza:
+# se agregaran en la Fase 3, sin tocar ahora codigo ajeno a Fase 1.
 SERVER_SOURCES = src/pipelined.c \
                  src/server.c \
                  src/scheduler.c \
                  src/agents.c \
                  src/protocol.c \
-                 src/util.c
+                 src/util.c \
+                 src/graph.c \
+                 src/model.c \
+                 src/yaml_parser.c \
+                 src/validator.c \
+                 src/script.c \
+                 src/tasks.c
 
 CLIENT_SOURCES = src/pipectl.c src/protocol.c src/util.c
 
@@ -37,9 +45,11 @@ TESTS = $(BUILD)/test_protocol \
         $(BUILD)/test_script \
         $(BUILD)/test_tasks \
         $(BUILD)/test_data \
-        $(BUILD)/test_motor
+        $(BUILD)/test_motor \
+        $(BUILD)/test_yaml \
+        $(BUILD)/test_validator
 
-.PHONY: all test clean race FORCE
+.PHONY: all test clean race test-race FORCE
 
 all: pipelined pipectl
 
@@ -83,10 +93,10 @@ $(BUILD)/test_cli: tests/test_cli.c $(BUILD)/util.o
 $(BUILD)/test_graph: tests/test_graph.c $(BUILD)/graph.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-$(BUILD)/test_yaml: tests/test_yaml.c $(BUILD)/yaml_parser.o
+$(BUILD)/test_yaml: tests/test_yaml.c $(BUILD)/yaml_parser.o $(BUILD)/model.o $(BUILD)/graph.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-$(BUILD)/test_validator: tests/test_validator.c $(BUILD)/validator.o $(BUILD)/graph.o
+$(BUILD)/test_validator: tests/test_validator.c $(BUILD)/validator.o $(BUILD)/yaml_parser.o $(BUILD)/model.o $(BUILD)/graph.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_submit_yaml: tests/test_submit_yaml.c $(BUILD)/util.o
@@ -106,6 +116,11 @@ $(BUILD)/test_data: tests/test_data.c $(BUILD)/tasks.o
 $(BUILD)/test_motor: tests/test_motor.c $(BUILD)/agents.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
+# No se afirma una carrera con SUBMIT aun deshabilitado. La prueba de
+# 100 SUBMIT concurrentes debe incorporarse durante las Fases 4-5.
+test-race: race
+	@echo "PENDIENTE: test-race requiere SUBMIT real (Fase 4/5)"; exit 2
+
 test: all $(TESTS)
 	./$(BUILD)/test_protocol
 	./$(BUILD)/test_util
@@ -116,11 +131,16 @@ test: all $(TESTS)
 	./$(BUILD)/test_tasks
 	./$(BUILD)/test_data
 	./$(BUILD)/test_motor
+	./$(BUILD)/test_yaml
+	./$(BUILD)/test_validator
 
 clean:
 	rm -rf $(BUILD) pipelined pipectl pipelined-race
 
 -include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
+
+
+
 
 
 
