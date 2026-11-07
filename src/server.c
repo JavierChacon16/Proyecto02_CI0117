@@ -1,5 +1,8 @@
+
+
 #define _POSIX_C_SOURCE 200809L
 #include "state.h"
+#include "motor.h"
 #include "protocol.h"
 #include "util.h"
 #include <errno.h>
@@ -31,14 +34,6 @@ int error_cliente(int fd, const char *codigo, const char *mensaje)
     return nu_send_response(fd, linea);
 }
 
-static void solicitar_apagado(servidor_t *s)
-{
-    pthread_mutex_lock(&s->mu);
-    s->apagar = 1;
-    pthread_cond_broadcast(&s->cambio);
-    pthread_mutex_unlock(&s->mu);
-}
-
 static void atender(cliente_t *c)
 {
     char linea[PROTO_MAX_REQUEST_LINE];
@@ -57,14 +52,29 @@ static void atender(cliente_t *c)
     switch (req.type) {
     case CMD_SUBMIT: submit(c, req.data.submit.yaml_len); break;
     case CMD_LIST: consultar(c, 0, 1); break;
+    case CMD_CANCEL: {
+        int resultado = cancelar_ejecucion(c->servidor, req.data.cancel.id);
+        if (resultado == CANCELAR_OK) {
+            if (protocol_format_ok(linea, sizeof linea, req.data.cancel.id) >= 0)
+                nu_send_response(c->fd, linea);
+        } else if (resultado == CANCELAR_NOT_FOUND) {
+            error_cliente(c->fd, "NOT_FOUND", "ID inexistente");
+        } else if (resultado == CANCELAR_ESTADO_TERMINAL) {
+            error_cliente(c->fd, ERR_INVALID_STATE, "ejecucion terminal");
+        } else {
+            error_cliente(c->fd, "INTERNAL", "error al cancelar");
+        }
+        break;
+    }
     case CMD_STATUS: consultar(c, req.data.status.id, 0); break;
     case CMD_SHUTDOWN:
-        /* Primero confirmar; el hilo principal cerrara las conexiones. */
         if (protocol_format_bye(linea, sizeof linea) >= 0)
             nu_send_response(c->fd, linea);
-        solicitar_apagado(c->servidor);
+        motor_solicitar_apagado(c->servidor);
         break;
-    default: error_cliente(c->fd, ERR_INVALID_STATE, "comando aun no implementado");
+    default:
+        error_cliente(c->fd, ERR_INVALID_STATE, "comando aun no implementado");
+        break;
     }
 }
 
@@ -85,7 +95,8 @@ static void *cliente_hilo(void *arg)
     return NULL; /* No vuelve a acceder a s. */
 }
 
-int iniciar_servidor(int puerto, int agentes, const char *directorio)
+static int iniciar_servidor_impl(int puerto, int agentes, const char *directorio,
+                                int presupuesto, unsigned timeout_defecto)
 {
     struct stat st;
     if ((mkdir(directorio, 0700) < 0 && errno != EEXIST) ||
@@ -116,7 +127,10 @@ int iniciar_servidor(int puerto, int agentes, const char *directorio)
     servidor_t s = { .mu = PTHREAD_MUTEX_INITIALIZER,
         .mu_id = PTHREAD_MUTEX_INITIALIZER,
         .cambio = PTHREAD_COND_INITIALIZER, .proximo_id = 1,
-        .agentes = agentes, .directorio = directorio };
+        .agentes = agentes, .agentes_configurados = agentes,
+        .limite_hilos_total = presupuesto,
+        .timeout_defecto_segundos = timeout_defecto,
+        .directorio = directorio };
     pthread_attr_t attr;
     int rc = pthread_attr_init(&attr);
     if (rc != 0) {
@@ -137,13 +151,13 @@ int iniciar_servidor(int puerto, int agentes, const char *directorio)
     pthread_mutex_lock(&s.mu);
     while (!s.listo) pthread_cond_wait(&s.cambio, &s.mu);
     pthread_mutex_unlock(&s.mu);
-    printf("Servidor escuchando en el puerto %d (simulacion)\n", puerto);
+    printf("Servidor escuchando en el puerto %d (motor A1; submit pendiente)\n", puerto);
     fflush(stdout);
     int fallo = 0;
     for (;;) {
         struct timespec cero = {0};
         int signo = sigtimedwait(&senales, NULL, &cero);
-        if (signo == SIGINT || signo == SIGTERM) solicitar_apagado(&s);
+        if (signo == SIGINT || signo == SIGTERM) motor_solicitar_apagado(&s);
         pthread_mutex_lock(&s.mu);
         int apagar = s.apagar;
         pthread_mutex_unlock(&s.mu);
@@ -191,29 +205,81 @@ int iniciar_servidor(int puerto, int agentes, const char *directorio)
     }
     close(fd);
     pthread_attr_destroy(&attr);
+    motor_solicitar_apagado(&s);
+
+    /* Duplicar los FD bajo mu para no usar referencias a cliente_t tras
+     * liberar el lock: los hilos detached pueden cerrar/liberar sus objetos.
+     * shutdown()/close() se realizan siempre FUERA de mu. */
+    int duplicados[MAX_CLIENTES];
+    size_t cantidad_dup = 0;
     pthread_mutex_lock(&s.mu);
-    s.apagar = 1;
-    /* Politica: cancelar pendientes, terminar los que ya estan running. */
-    for (ejecucion_t *e = s.primero; e; e = e->cola) {
-        e->estado = CANCELED; free(e->yaml); e->yaml = NULL;
-        --s.n_cola; s.bytes_cola -= e->bytes;
+    for (cliente_t *c = s.clientes; c && cantidad_dup < MAX_CLIENTES;
+         c = c->siguiente) {
+        int copia = dup(c->fd);
+        if (copia >= 0) duplicados[cantidad_dup++] = copia;
     }
-    s.primero = s.ultimo = NULL;
-    for (cliente_t *c = s.clientes; c; c = c->siguiente)
-        shutdown(c->fd, SHUT_RDWR); /* Desbloquea lecturas . */
-    pthread_cond_broadcast(&s.cambio);
+    pthread_mutex_unlock(&s.mu);
+    for (size_t i = 0; i < cantidad_dup; ++i) {
+        shutdown(duplicados[i], SHUT_RDWR);
+        close(duplicados[i]);
+    }
+
+    /* En espera, pthread_cond_wait suelta mu. Los agentes pueden finalizar;
+     * si transcurren 2s, las cancelaciones atomicas despiertan al ejecutor. */
+    (void)motor_esperar_apagado(&s);
+    pthread_join(planificador, NULL); /* Nunca con mu retenido. */
+    pthread_mutex_lock(&s.mu);
     while (s.clientes) pthread_cond_wait(&s.cambio, &s.mu);
     pthread_mutex_unlock(&s.mu);
-    pthread_join(planificador, NULL);
-    /* Sincronizacion explicita adicional con los ultimos accesos bajo mu.
-     * join y la barrera de salida OpenMP ya esperan la terminacion.
-     * */
-    pthread_mutex_lock(&s.mu);
-    pthread_mutex_unlock(&s.mu);
-    fprintf(stderr, "Maximo de agentes simultaneos: %d/%d\n", s.max_activos, s.agentes);
+    fprintf(stderr, "Maximo de agentes simultaneos: %d/%d\n",
+            s.max_activos, s.agentes);
+
+    /* TODO A2: liberar_pipeline() y estructuras logs/vars/artifacts de las
+     * ejecuciones publicadas; SUBMIT no admite ninguna en A1. */
     ejecucion_t *e = s.ejecuciones;
-    while (e) { ejecucion_t *sig = e->siguiente; free(e->yaml); free(e); e = sig; }
-    pthread_cond_destroy(&s.cambio); pthread_mutex_destroy(&s.mu);
+    while (e) {
+        ejecucion_t *sig = e->siguiente;
+        free(e->yaml);
+        free(e);
+        e = sig;
+    }
+    pthread_cond_destroy(&s.cambio);
+    pthread_mutex_destroy(&s.mu);
     pthread_mutex_destroy(&s.mu_id);
     return fallo ? EXIT_FAILURE : EXIT_SUCCESS;
+}
+
+static unsigned timeout_entorno(void)
+{
+    const char *texto = getenv("PIPELINED_JOB_TIMEOUT_SECONDS");
+    if (!texto || !*texto) return TIMEOUT_TRABAJO_DEFECTO_SEGUNDOS;
+    errno = 0;
+    char *fin = NULL;
+    unsigned long x = strtoul(texto, &fin, 10);
+    if (errno || *fin || x < 1 || x > TIMEOUT_TRABAJO_MAX_SEGUNDOS)
+        return 0;
+    return (unsigned)x;
+}
+
+int iniciar_servidor(int puerto, int agentes, const char *directorio)
+{
+    unsigned timeout = timeout_entorno();
+    if (!timeout) {
+        fprintf(stderr, "PIPELINED_JOB_TIMEOUT_SECONDS invalido\n");
+        return EXIT_FAILURE;
+    }
+    return iniciar_servidor_impl(puerto, agentes, directorio, 0, timeout);
+}
+
+int iniciar_servidor_configurado(const servidor_config_t *config)
+{
+    if (!config || config->puerto < 1 || config->puerto > 65535 ||
+        config->agentes < 1 || !config->directorio ||
+        config->limite_hilos_total < 0 ||
+        config->timeout_defecto_segundos < 1 ||
+        config->timeout_defecto_segundos > TIMEOUT_TRABAJO_MAX_SEGUNDOS)
+        return EXIT_FAILURE;
+    return iniciar_servidor_impl(config->puerto, config->agentes,
+                                config->directorio, config->limite_hilos_total,
+                                config->timeout_defecto_segundos);
 }
