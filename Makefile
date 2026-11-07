@@ -1,4 +1,3 @@
-
 # Proyecto 2 - CI-0117
 
 
@@ -14,10 +13,7 @@ LDLIBS = -pthread -fopenmp -lm
 
 BUILD = build
 
-# Fase 1: parser propio y modelo v2. El servidor compila todos los
-# modulos implementados, aunque SUBMIT seguira pendiente hasta la Fase 4.
-# vars/artifacts/logs estan vacios y -pedantic -Werror los rechaza:
-# se agregaran en la Fase 3, sin tocar ahora codigo ajeno a Fase 1.
+# Fase 3: incorporados vars, artifacts y logs.
 SERVER_SOURCES = src/pipelined.c \
                  src/server.c \
                  src/scheduler.c \
@@ -29,7 +25,10 @@ SERVER_SOURCES = src/pipelined.c \
                  src/yaml_parser.c \
                  src/validator.c \
                  src/script.c \
-                 src/tasks.c
+                 src/tasks.c \
+                 src/vars.c \
+                 src/artifacts.c \
+                 src/logs.c
 
 CLIENT_SOURCES = src/pipectl.c src/protocol.c src/util.c
 
@@ -138,9 +137,3 @@ clean:
 	rm -rf $(BUILD) pipelined pipectl pipelined-race
 
 -include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
-
-
-
-
-
-
