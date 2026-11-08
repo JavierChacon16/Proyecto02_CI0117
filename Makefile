@@ -1,5 +1,5 @@
-# Proyecto 2 - CI-0117
 
+# Proyecto 2 - CI-0117
 
 CC = gcc
 
@@ -13,11 +13,6 @@ LDLIBS = -pthread -fopenmp -lm
 
 BUILD = build
 
-# Fases 1 y 2: parser propio, modelo v2 y ejecutores cancelables.
-# El servidor compila todos los
-# modulos implementados, aunque SUBMIT seguira pendiente hasta la Fase 4.
-# vars/artifacts/logs estan vacios y -pedantic -Werror los rechaza:
-# se agregaran en la Fase 3, sin tocar ahora codigo ajeno a Fase 1.
 SERVER_SOURCES = src/pipelined.c \
                  src/server.c \
                  src/scheduler.c \
@@ -49,9 +44,11 @@ TESTS = $(BUILD)/test_protocol \
         $(BUILD)/test_data \
         $(BUILD)/test_motor \
         $(BUILD)/test_yaml \
-        $(BUILD)/test_validator
+        $(BUILD)/test_validator \
+        $(BUILD)/test_concurrency \
+        $(BUILD)/test_determinism
 
-.PHONY: all test clean race test-race FORCE
+.PHONY: all test test-all clean race test-race test-concurrency test-determinism test-integracion bench test-asan test-tsan FORCE
 
 all: pipelined pipectl
 
@@ -119,15 +116,66 @@ $(BUILD)/test_tasks: tests/test_tasks.c $(BUILD)/tasks.o
 $(BUILD)/test_data: tests/test_data.c $(BUILD)/tasks.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-# A1: test_model.c y test_submit_yaml.c son pruebas del contrato v1 y de
-# SUBMIT real respectivamente. No se compilan en make test hasta A2.
 $(BUILD)/test_motor: tests/test_motor.c $(BUILD)/agents.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-# No se afirma una carrera con SUBMIT aun deshabilitado. La prueba de
-# 100 SUBMIT concurrentes debe incorporarse durante las Fases 4-5.
-test-race: race
-	@echo "PENDIENTE: test-race requiere SUBMIT real (Fase 4/5)"; exit 2
+$(BUILD)/test_concurrency: tests/test_concurrency.c $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_determinism: tests/test_determinism.c $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/medir: benchmarks/medir.c $(BUILD)/util.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/generar_pipelines: benchmarks/generar_pipelines.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/generar_datos: benchmarks/generar_datos.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+# Pruebas reales con servidor TCP.
+test-concurrency: all $(BUILD)/test_concurrency
+	@set -eu; port=$$((30000 + $$$$ % 20000)); dir=$$(mktemp -d); \
+	./pipelined $$port 4 $$dir >/dev/null 2>&1 & pid=$$!; \
+	trap 'kill $$pid 2>/dev/null || :; wait $$pid 2>/dev/null || :; rm -rf "$$dir"' EXIT; \
+	sleep 1; ./$(BUILD)/test_concurrency 127.0.0.1 $$port examples/pipeline_demo.yaml
+
+test-determinism: all $(BUILD)/test_determinism
+	@set -eu; \
+	for agentes in 1 2 3 4; do \
+	  for omp in 1 2 4 8; do \
+	    port=$$((30000 + $$$$ % 20000)); dir=$$(mktemp -d); \
+	    OMP_NUM_THREADS=$$omp ./pipelined $$port $$agentes $$dir >/dev/null 2>&1 & pid=$$!; \
+	    sleep 1; \
+	    if ! ./$(BUILD)/test_determinism 127.0.0.1 $$port examples/pipeline_demo.yaml; then \
+	      kill $$pid 2>/dev/null || :; wait $$pid 2>/dev/null || :; rm -rf "$$dir"; exit 1; \
+	    fi; \
+	    kill $$pid 2>/dev/null || :; wait $$pid 2>/dev/null || :; rm -rf "$$dir"; \
+	  done; \
+	done
+
+test-race: pipelined-race $(BUILD)/test_concurrency
+	@set -eu; port=$$((30000 + $$$$ % 20000)); dir=$$(mktemp -d); \
+	./pipelined-race $$port 4 $$dir >/dev/null 2>&1 & pid=$$!; \
+	trap 'kill $$pid 2>/dev/null || :; wait $$pid 2>/dev/null || :; rm -rf "$$dir"' EXIT; \
+	sleep 1; ./$(BUILD)/test_concurrency 127.0.0.1 $$port examples/pipeline_demo.yaml race
+
+test-integracion: test-concurrency test-determinism
+
+test-all: test test-integracion
+
+bench: all $(BUILD)/medir $(BUILD)/generar_pipelines $(BUILD)/generar_datos
+	@mkdir -p benchmarks/resultados
+	./$(BUILD)/medir examples/pipeline_demo.yaml 1 benchmarks/resultados/tiempos.csv benchmarks/resultados/tabla.tex
+
+test-asan:
+	$(MAKE) clean
+	$(MAKE) test EXTRA="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined" LDLIBS="-pthread -fopenmp -lm -fsanitize=address,undefined"
+
+test-tsan:
+	$(MAKE) clean
+	$(MAKE) test EXTRA="-O1 -g -fno-omit-frame-pointer -fsanitize=thread" LDLIBS="-pthread -fopenmp -lm -fsanitize=thread"
 
 test: all $(TESTS)
 	./$(BUILD)/test_protocol
@@ -143,17 +191,9 @@ test: all $(TESTS)
 	./$(BUILD)/test_motor
 	./$(BUILD)/test_yaml
 	./$(BUILD)/test_validator
+	@echo "Pruebas TCP reales: make test-integracion; carrera: make test-race"
 
 clean:
 	rm -rf $(BUILD) pipelined pipectl pipelined-race
 
 -include $(wildcard $(BUILD)/*.d $(BUILD)/race/*.d)
-
-
-
-
-
-
-
-
-
