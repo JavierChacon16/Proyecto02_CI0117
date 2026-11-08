@@ -52,7 +52,6 @@ static void atender(cliente_t *c)
     switch (req.type) {
     case CMD_SUBMIT: submit(c, req.data.submit.yaml_len); break;
     case CMD_LIST: consultar(c, 0, 1); break;
-    
     case CMD_CANCEL: {
         int resultado = cancelar_ejecucion(c->servidor, req.data.cancel.id);
         if (resultado == CANCELAR_OK) {
@@ -68,6 +67,8 @@ static void atender(cliente_t *c)
         break;
     }
     case CMD_STATUS: consultar(c, req.data.status.id, 0); break;
+    case CMD_LOGS: consultar_logs(c, req.data.logs.id, req.data.logs.job, req.data.logs.follow); 
+        break;
     case CMD_SHUTDOWN:
         if (protocol_format_bye(linea, sizeof linea) >= 0)
             nu_send_response(c->fd, linea);

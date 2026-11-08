@@ -28,7 +28,8 @@ SERVER_SOURCES = src/pipelined.c \
                  src/tasks.c \
                  src/vars.c \
                  src/artifacts.c \
-                 src/logs.c
+                 src/logs.c \
+				 src/executor.c
 
 CLIENT_SOURCES = src/pipectl.c src/protocol.c src/util.c
 
