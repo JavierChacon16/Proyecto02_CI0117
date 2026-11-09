@@ -1,0 +1,23 @@
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/pipelined.c -o build/race/pipelined.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/server.c -o build/race/server.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/scheduler.c -o build/race/scheduler.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/agents.c -o build/race/agents.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/protocol.c -o build/race/protocol.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/util.c -o build/race/util.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/graph.c -o build/race/graph.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/model.c -o build/race/model.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/yaml_parser.c -o build/race/yaml_parser.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/validator.c -o build/race/validator.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/script.c -o build/race/script.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/tasks.c -o build/race/tasks.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/vars.c -o build/race/vars.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/artifacts.c -o build/race/artifacts.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/logs.c -o build/race/logs.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -DSIN_PROTECCION -MMD -MP -c src/executor.c -o build/race/executor.o
+src/executor.c: In function ‘ejecutor_real’:
+src/executor.c:17:14: warning: unused variable ‘et’ [-Wunused-variable]
+   17 |     etapa_t *et = &plan->etapas[t->indice_etapa];
+      |              ^~
+gcc -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp   build/race/pipelined.o build/race/server.o build/race/scheduler.o build/race/agents.o build/race/protocol.o build/race/util.o build/race/graph.o build/race/model.o build/race/yaml_parser.o build/race/validator.o build/race/script.o build/race/tasks.o build/race/vars.o build/race/artifacts.o build/race/logs.o build/race/executor.o -pthread -fopenmp -lm -o pipelined-race
+
+Codigo de salida: 0

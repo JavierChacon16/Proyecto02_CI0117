@@ -1,0 +1,25 @@
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/pipelined.c -o build/pipelined.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/server.c -o build/server.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/scheduler.c -o build/scheduler.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/agents.c -o build/agents.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/protocol.c -o build/protocol.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/util.c -o build/util.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/graph.c -o build/graph.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/model.c -o build/model.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/yaml_parser.c -o build/yaml_parser.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/validator.c -o build/validator.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/script.c -o build/script.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/tasks.c -o build/tasks.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/vars.c -o build/vars.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/artifacts.c -o build/artifacts.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/logs.c -o build/logs.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/executor.c -o build/executor.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/pipectl.c -o build/pipectl.o
+src/executor.c: In function ‘ejecutor_real’:
+src/executor.c:17:14: warning: unused variable ‘et’ [-Wunused-variable]
+   17 |     etapa_t *et = &plan->etapas[t->indice_etapa];
+      |              ^~
+gcc -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp   build/pipectl.o build/protocol.o build/util.o -pthread -fopenmp -lm -o pipectl
+gcc -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp   build/pipelined.o build/server.o build/scheduler.o build/agents.o build/protocol.o build/util.o build/graph.o build/model.o build/yaml_parser.o build/validator.o build/script.o build/tasks.o build/vars.o build/artifacts.o build/logs.o build/executor.o -pthread -fopenmp -lm -o pipelined
+
+Codigo de salida: 0

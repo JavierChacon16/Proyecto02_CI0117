@@ -1,0 +1,10 @@
+Servidor escuchando en el puerto 43614 (motor A1; submit pendiente)
+Maximo de agentes simultaneos: 1/2
+Se esperaba INVALID 1 y se recibio ERR BAD_REQUEST error al parsear YAML
+Se esperaba INVALID 1 y se recibio ERR BAD_REQUEST error al parsear YAML
+Se esperaba INVALID 1 y se recibio ERR BAD_REQUEST error al parsear YAML
+Se esperaba INVALID 1 y se recibio ERR BAD_REQUEST error al parsear YAML
+Se esperaba INVALID 1 y se recibio ERR BAD_REQUEST error al parsear YAML
+Fallaron 5 pruebas SUBMIT YAML
+
+Codigo de salida: 1

@@ -1,0 +1,3 @@
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_submit_yaml.c build/util.o -pthread -fopenmp -lm -o build/test_submit_yaml
+
+Codigo de salida: 0

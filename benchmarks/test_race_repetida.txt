@@ -1,0 +1,2 @@
+OK: version protegida, 100 SUBMIT reales e IDs unicos
+OK: SIN_PROTECCION, 92 propuestas de ID repetidas; 92 encolados rechazados. Motor no publica duplicados.

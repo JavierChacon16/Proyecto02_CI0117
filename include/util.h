@@ -2,24 +2,26 @@
 // Created by Sleyter Angulo on 9/14/26.
 //
 
-#ifndef MINI_SERVER_NET_UTIL_H
-#define MINI_SERVER_NET_UTIL_H
-
+#ifndef UTIL_H
+/* Utilidades para operaciones de red y manejo de errores. */
+#define UTIL_H
 #include <stddef.h>
+#include <time.h>
 #include <sys/types.h>
-
-// Codigos de error 
-#define NU_ERROR    (-1)   // error de red, o cierre a mitad de un mensaje
-#define NU_CLOSED   (-2)   // el otro extremo cerro la conexion sin enviar nada mas
-#define NU_TOO_LONG (-3)   // la linea no cabe en el buffer del llamador
-#define NU_BAD_LINE (-4)   // la linea contiene un byte nulo
-
+#define NU_ERROR (-1)
+#define NU_CLOSED (-2)
+#define NU_BAD_LINE (-3)
+#define NU_TOO_LONG (-4)
+#define NU_TIMEOUT (-5)
 int nu_listen(unsigned short port, int backlog);
 int nu_accept(int listen_fd);
 int nu_connect(const char *host, unsigned short port);
-int nu_write_all(int file_descriptor, const void *buffer, size_t size);
-ssize_t nu_read_line(int file_descriptor, char *buffer, size_t size);
-int nu_read_all(int file_descriptor, void *buffer, size_t size);
-int nu_send_response(int file_descriptor, const char *response);
-
-#endif //MINI_SERVER_NET_UTIL_H
+int nu_write_all(int fd, const void *buffer, size_t size);
+ssize_t nu_read_line(int fd, char *buffer, size_t size);
+int nu_read_all(int fd, void *buffer, size_t size);
+int nu_send_response(int fd, const char *response);
+ssize_t nu_read_line_until(int fd, char *buffer, size_t size,
+                           const struct timespec *until);
+int nu_read_all_until(int fd, void *buffer, size_t size,
+                      const struct timespec *until);
+#endif
