@@ -1,8 +1,8 @@
-
-
 #define _POSIX_C_SOURCE 200809L
 #include "state.h"
 #include "motor.h"
+#include "vars.h"
+#include "logs.h"
 #include "protocol.h"
 #include "util.h"
 #include <errno.h>
@@ -153,7 +153,7 @@ static int iniciar_servidor_impl(int puerto, int agentes, const char *directorio
     pthread_mutex_lock(&s.mu);
     while (!s.listo) pthread_cond_wait(&s.cambio, &s.mu);
     pthread_mutex_unlock(&s.mu);
-    printf("Servidor escuchando en el puerto %d (motor A1; submit pendiente)\n", puerto);
+    printf("Servidor escuchando en el puerto %d\n", puerto);
     fflush(stdout);
     int fallo = 0;
     for (;;) {
@@ -241,6 +241,9 @@ static int iniciar_servidor_impl(int puerto, int agentes, const char *directorio
     ejecucion_t *e = s.ejecuciones;
     while (e) {
         ejecucion_t *sig = e->siguiente;
+        bitacoras_destruir(e->bitacoras);
+        vars_destruir(e->variables);
+        liberar_pipeline(e->plan);
         free(e->yaml);
         free(e);
         e = sig;
