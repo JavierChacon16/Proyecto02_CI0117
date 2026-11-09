@@ -1,0 +1,10 @@
+tarea,hilos,mediana_segundos,speedup,eficiencia
+cpu,1,0.076632,1.0,1.0
+cpu,2,0.058547,1.3089,0.6544
+cpu,4,0.041948,1.8268,0.4567
+histogram,1,0.099338,1.0,1.0
+histogram,2,0.067658,1.4682,0.7341
+histogram,4,0.063171,1.5725,0.3931
+wordcount,1,0.170531,1.0,1.0
+wordcount,2,0.196849,0.8663,0.4332
+wordcount,4,0.178219,0.9569,0.2392

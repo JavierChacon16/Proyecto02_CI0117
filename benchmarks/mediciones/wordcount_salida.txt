@@ -1,0 +1,10 @@
+total,838861
+distintas,7
+palabra,cantidad
+concurrencia,139810
+datos,139810
+determinismo,139810
+paralelismo,139810
+pipeline,139810
+prueba,139810
+concurre,1
