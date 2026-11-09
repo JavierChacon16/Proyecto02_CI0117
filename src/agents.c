@@ -383,8 +383,9 @@ int motor_encolar_ejecucion(servidor_t *s, ejecucion_t *e)
 {
     if (!s || !e || !validar_plan_minimo(e->plan)) return -1;
     pthread_mutex_lock(&s->mu);
-    if (s->apagar || s->n_cola >= MAX_COLA ||
-        e->bytes > MAX_BYTES_COLA - s->bytes_cola) {
+    if (s->apagar || (!e->reserva_admision &&
+        (s->n_cola >= MAX_COLA ||
+         e->bytes > MAX_BYTES_COLA - s->bytes_cola))) {
         pthread_mutex_unlock(&s->mu);
         return -1;
     }
@@ -427,11 +428,23 @@ int motor_encolar_ejecucion(servidor_t *s, ejecucion_t *e)
     }
     e->siguiente = s->ejecuciones;
     s->ejecuciones = e;
-    ++s->n_cola;
-    s->bytes_cola += e->bytes;
+    if (!e->reserva_admision) {
+        ++s->n_cola;
+        s->bytes_cola += e->bytes;
+    }
+    e->reserva_admision = 0; /* El motor asume propiedad de la reserva. */
     recalcular(s, e);
     pthread_mutex_unlock(&s->mu);
     return 0;
+}
+
+void motor_liberar_admision(servidor_t *s, size_t bytes)
+{
+    if (!s) return;
+    pthread_mutex_lock(&s->mu);
+    if (s->n_cola) --s->n_cola;
+    if (s->bytes_cola >= bytes) s->bytes_cola -= bytes;
+    pthread_mutex_unlock(&s->mu);
 }
 
 int motor_fallar_trabajo_preparacion(servidor_t *s, ejecucion_t *e,
@@ -695,14 +708,9 @@ int motor_devolver_extras(servidor_t *s, int extras)
     return 0;
 }
 
-static estado_t ejecutor_no_integrado(servidor_t *s, ejecucion_t *e,
-                                     trabajo_t *t, void *contexto)
-{
-    (void)s; (void)e; (void)t; (void)contexto;
-    /* TODO A2: reemplazar por ejecutor real de scripts/tasks; nunca simular
-     * exito ni ejecutar un pipeline sin implementacion. */
-    return FAILED;
-}
+/* La funcion se implementa en executor.c; el motor sigue siendo
+ * independiente del ejecutor para test_motor. */
+extern estado_t ejecutor_real(servidor_t *, ejecucion_t *, trabajo_t *, void *);
 
 static void *planificador(servidor_t *s, motor_ejecutor_trabajo_t ejecutar,
                          void *contexto)
@@ -749,5 +757,5 @@ void *motor_planificar_inyectado(void *argumento)
 void *planificar(void *argumento)
 {
     if (!argumento) return NULL;
-    return planificador(argumento, ejecutor_no_integrado, NULL);
+    return planificador(argumento, ejecutor_real, NULL);
 }
