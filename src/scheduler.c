@@ -4,6 +4,9 @@
 #include "yaml_parser.h" 
 #include "artifacts.h"
 #include "logs.h"
+#include "vars.h"
+#include <errno.h>
+#include <sys/stat.h>
 #include "motor.h"
 #include "util.h"
 #include <limits.h>
@@ -19,7 +22,11 @@ static int siguiente_id(servidor_t *s)
 #endif
     unsigned int id = s->proximo_id;
 #ifdef SIN_PROTECCION
+    /* Amplia la ventana de carrera solo en el binario demostrativo. */
     sched_yield();
+    struct timespec ventana = { .tv_sec = 0, .tv_nsec = 2000000L };
+    (void)nanosleep(&ventana, NULL);
+    fprintf(stderr, "SIN_PROTECCION ID_PROPUESTO %u\n", id);
 #endif
     if (id <= INT_MAX) s->proximo_id = id + 1U;
 #ifndef SIN_PROTECCION
@@ -47,111 +54,142 @@ static int terminal(estado_t st)
     return st != QUEUED && st != RUNNING;
 }
 
+/* Los nombres de etapas y trabajos ya fueron validados por el parser. */
+static int crear_carpeta(const char *ruta)
+{
+    if (mkdir(ruta,0700)==0) return 0;
+    return errno==EEXIST?0:-1;
+}
+static int crear_workspaces(servidor_t *s,ejecucion_t *e)
+{
+    size_t n=strlen(s->directorio)+64;
+    char *base=malloc(n);
+    if (!base) return -1;
+    snprintf(base,n,"%s/run_%d",s->directorio,e->id);
+    if (crear_carpeta(base)) {free(base);return -1;}
+    for(size_t i=0;i<e->plan->cantidad_etapas;++i) {
+        etapa_t *et=&e->plan->etapas[i];
+        size_t l=strlen(base)+strlen(et->nombre)+2;
+        char *dir=malloc(l);
+        if(!dir) {free(base);return -1;}
+        snprintf(dir,l,"%s/%s",base,et->nombre);
+        if(crear_carpeta(dir)) {free(dir);free(base);return -1;}
+        for(size_t j=0;j<et->cantidad_trabajos;++j) {
+            trabajo_t *t=&e->plan->trabajos[et->primer_trabajo+j];
+            size_t z=strlen(dir)+strlen(t->nombre)+2;
+            char *ruta=malloc(z);
+            if(!ruta) {free(dir);free(base);return -1;}
+            snprintf(ruta,z,"%s/%s",dir,t->nombre);
+            if(crear_carpeta(ruta)) {free(ruta);free(dir);free(base);return -1;}
+            t->directorio_trabajo=ruta; /* liberar_pipeline() es propietario */
+        }
+        free(dir);
+    }
+    free(base);return 0;
+}
+
+/* Reserva atomica antes de leer el payload; la propiedad pasa al motor
+ * exactamente una vez. No mantenemos s->mu durante I/O ni el parser. */
 int submit(cliente_t *c, size_t bytes)
 {
-    if (!c || !c->servidor || bytes == 0) return -1;
+    if (!c || !c->servidor || bytes == 0 || bytes > PROTO_MAX_YAML) return -1;
     servidor_t *s = c->servidor;
-
     pthread_mutex_lock(&s->mu);
     int apagar = s->apagar;
-    int ocupado = s->n_cola >= MAX_COLA ||
-                  bytes > MAX_BYTES_COLA - s->bytes_cola;
+    int ocupado = s->n_cola >= MAX_COLA || bytes > MAX_BYTES_COLA - s->bytes_cola;
+    if (!apagar && !ocupado) {
+        ++s->n_cola;
+        s->bytes_cola += bytes;
+    }
     pthread_mutex_unlock(&s->mu);
-
     if (apagar) return error_cliente(c->fd, ERR_INVALID_STATE, "servidor cerrado");
-
     if (ocupado) {
         int rc = error_cliente(c->fd, "BUSY", "limite de cola o bytes YAML");
         if (rc != 0) return rc;
-        // Drenaje best-effort del YAML enviado por el cliente cuando está ocupado
         char buffer[8192];
         size_t restante = bytes;
         while (restante) {
             size_t n = restante < sizeof buffer ? restante : sizeof buffer;
-            if (nu_read_all_until(c->fd, buffer, n, &c->vencimiento) != 0)
-                break;
+            if (nu_read_all_until(c->fd, buffer, n, &c->vencimiento) != 0) break;
             restante -= n;
         }
         return 0;
     }
 
-    // Reservar en la cola
-    pthread_mutex_lock(&s->mu);
-    s->n_cola++;
-    s->bytes_cola += bytes;
-    pthread_mutex_unlock(&s->mu);
-
-    char *yaml_buf = malloc(bytes + 1);
-    if (!yaml_buf) {
-        pthread_mutex_lock(&s->mu);
-        s->n_cola--;
-        s->bytes_cola -= bytes;
-        pthread_mutex_unlock(&s->mu);
-        return -1;
-    }
-
-    size_t restante = bytes;
-    size_t leidos = 0;
-    while (restante) {
-        size_t n = restante < 8192 ? restante : 8192;
-        if (nu_read_all_until(c->fd, yaml_buf + leidos, n, &c->vencimiento) != 0) {
-            free(yaml_buf);
-            pthread_mutex_lock(&s->mu);
-            s->n_cola--;
-            s->bytes_cola -= bytes;
-            pthread_mutex_unlock(&s->mu);
-            return -1;
-        }
-        leidos += n;
-        restante -= n;
-    }
-    yaml_buf[leidos] = '\0';
-
-    pipeline_t *plan = NULL;
-    errores_yaml_t errores = {0};
-    int parse_rc = parsear_pipeline_yaml(yaml_buf, bytes, &plan, &errores);
-
-    if (parse_rc != 0 || errores.cantidad > 0) {
-        pthread_mutex_lock(&s->mu);
-        s->n_cola--;
-        s->bytes_cola -= bytes;
-        pthread_mutex_unlock(&s->mu);
-
-        int rc_inv = error_cliente(c->fd, ERR_BAD_REQUEST, "error al parsear YAML");
-        liberar_errores_yaml(&errores);
-        free(yaml_buf);
-        if (plan) liberar_pipeline(plan);
-        return rc_inv;
-    }
-
-    int id = siguiente_id(s);
-    artifacts_inicializar_directorio(s->directorio, id);
-
-    ejecucion_t *ej = calloc(1, sizeof(ejecucion_t));
-    if (!ej) {
-        pthread_mutex_lock(&s->mu);
-        s->n_cola--;
-        s->bytes_cola -= bytes;
-        pthread_mutex_unlock(&s->mu);
-        free(yaml_buf);
-        liberar_pipeline(plan);
+    char *yaml = malloc(bytes + 1);
+    if (!yaml) {
+        motor_liberar_admision(s, bytes);
         return error_cliente(c->fd, "INTERNAL", "sin memoria");
     }
+    if (nu_read_all_until(c->fd, yaml, bytes, &c->vencimiento) != 0) {
+        free(yaml);
+        motor_liberar_admision(s, bytes);
+        return error_cliente(c->fd, ERR_BAD_REQUEST, "payload incompleto");
+    }
+    yaml[bytes] = '\0';
+    pipeline_t *plan = NULL;
+    errores_yaml_t errores = {0};
+    if (memchr(yaml, 0, bytes)) {
+        motor_liberar_admision(s, bytes);
+        free(yaml);
+        return error_cliente(c->fd, ERR_BAD_REQUEST, "NUL en YAML");
+    }
+    int rc_parser = parsear_pipeline_yaml(yaml, bytes, &plan, &errores);
+    if (rc_parser != 0 || errores.cantidad != 0) {
+        motor_liberar_admision(s, bytes);
+        char linea[PROTO_MAX_RESPONSE_LINE];
+        int n = errores.cantidad ? (int)errores.cantidad : 1;
+        if (protocol_format_invalid(linea, sizeof linea, n) >= 0)
+            (void)nu_send_response(c->fd, linea);
+        if (errores.cantidad == 0) {
+            if (protocol_format_invalid_item(linea, sizeof linea,
+                                             "L0:C0:yaml", "YAML invalido") >= 0)
+                (void)nu_send_response(c->fd, linea);
+        } else {
+            for (size_t i = 0; i < errores.cantidad; ++i) {
+                error_yaml_t *it = &errores.items[i];
+                if (protocol_format_invalid_item(linea, sizeof linea,
+                       it->ubicacion ? it->ubicacion : "L0:C0:yaml",
+                       it->mensaje ? it->mensaje : "YAML invalido") >= 0)
+                    (void)nu_send_response(c->fd, linea);
+            }
+        }
+        if (protocol_format_end(linea, sizeof linea) >= 0)
+            (void)nu_send_response(c->fd, linea);
+        liberar_errores_yaml(&errores);
+        liberar_pipeline(plan);
+        free(yaml);
+        return 0;
+    }
+    liberar_errores_yaml(&errores);
 
-    ej->id = id;
-    ej->plan = plan;
-    ej->nombre = plan->nombre;
-    ej->yaml = yaml_buf;
-    ej->bytes = bytes;
-    ej->estado = QUEUED;
-    clock_gettime(CLOCK_MONOTONIC, &ej->aceptada_en);
-    ej->bitacoras = bitacoras_crear();
-    atomic_init(&ej->cancelar_solicitado, 0);
-
-    motor_encolar_ejecucion(s, ej);
-
+    ejecucion_t *e = calloc(1, sizeof *e);
+    if (!e) {
+        liberar_pipeline(plan); free(yaml);
+        motor_liberar_admision(s, bytes);
+        return error_cliente(c->fd, "INTERNAL", "sin memoria");
+    }
+    e->id = siguiente_id(s);
+    e->plan = plan;
+    e->nombre = plan->nombre;
+    e->yaml = yaml;
+    e->bytes = bytes;
+    e->reserva_admision = 1;
+    e->bitacoras = bitacoras_crear();
+    e->variables = vars_crear(plan);
+    atomic_init(&e->cancelar_solicitado, 0);
+    if (!e->id || !e->bitacoras || !e->variables ||
+        crear_workspaces(s,e) != 0 ||
+        artifacts_inicializar_directorio(s->directorio, e->id) != 0 ||
+        motor_encolar_ejecucion(s, e) != 0) {
+        motor_liberar_admision(s, bytes);
+        if (e->bitacoras) bitacoras_destruir(e->bitacoras);
+        vars_destruir(e->variables);
+        liberar_pipeline(plan); free(yaml); free(e);
+        return error_cliente(c->fd, "INTERNAL", "no se pudo encolar");
+    }
     char respuesta[64];
-    snprintf(respuesta, sizeof(respuesta), "OK %d\n", id);
+    snprintf(respuesta, sizeof respuesta, "OK %d\n", e->id);
     return nu_write_all(c->fd, respuesta, strlen(respuesta));
 }
 
@@ -260,42 +298,32 @@ int consultar(cliente_t *c, int id, int lista)
 int consultar_logs(cliente_t *c, int id, const char *referencia, int follow)
 {
     if (!c || !c->servidor) return -1;
-    servidor_t *s = c->servidor;
-
+    servidor_t *s=c->servidor;
     pthread_mutex_lock(&s->mu);
-    ejecucion_t *ej = NULL;
-    for (ejecucion_t *e = s->ejecuciones; e; e = e->siguiente) {
-        if (e->id == id) {
-            ej = e;
-            break;
-        }
-    }
-    if (!ej || !ej->bitacoras) {
-        pthread_mutex_unlock(&s->mu);
-        return error_cliente(c->fd, "NOT_FOUND", "bitacora no encontrada");
-    }
-    bitacoras_ejecucion_t *b = ej->bitacoras;
+    ejecucion_t *e=s->ejecuciones;
+    while(e && e->id!=id) e=e->siguiente;
+    bitacoras_ejecucion_t *b=e?e->bitacoras:NULL;
     pthread_mutex_unlock(&s->mu);
-
-    size_t posicion = 0;
-    char destino[4096];
-    size_t leidos = 0;
-    int finalizado = 0;
-    unsigned esperar_ms = follow ? 2000 : 0;
-
-    while (1) {
-        int rc = bitacoras_leer(b, referencia, &posicion, destino, sizeof(destino), esperar_ms, &leidos, &finalizado);
-        if (rc == -2) return error_cliente(c->fd, "AMBIGUOUS", "nombre de trabajo ambiguo");
-        if (rc < 0) return -1;
-
-        if (leidos > 0) {
-            if (nu_write_all(c->fd, destino, leidos) != 0) {
-                return -1;
-            }
+    if(!b) return error_cliente(c->fd,"NOT_FOUND","bitacora no encontrada");
+    char linea[PROTO_MAX_RESPONSE_LINE];
+    if(protocol_format_logs(linea,sizeof linea,id)<0 ||
+       nu_send_response(c->fd,linea)!=0) return -1;
+    size_t posicion=0;
+    for(;;) {
+        char datos[3001];size_t leidos=0;int finalizado=0;
+        int rc=bitacoras_leer(b,referencia,&posicion,datos,sizeof datos-1,
+                              follow?100:0,&leidos,&finalizado);
+        if(rc==-2) return error_cliente(c->fd,"AMBIGUOUS","nombre de trabajo ambiguo");
+        if(rc<0) return -1;
+        if(leidos) {
+            datos[leidos]=0;
+            if(protocol_send_log_lines(c->fd,datos)) return -1;
         }
-
-        if (finalizado && leidos == 0) break;
-        if (!follow) break;
+        pthread_mutex_lock(&s->mu);
+        int termino=(e->estado!=QUEUED && e->estado!=RUNNING) || s->apagar;
+        pthread_mutex_unlock(&s->mu);
+        if(!follow || (termino && !leidos) || (finalizado && !leidos)) break;
     }
-    return 0;
+    if(protocol_format_end(linea,sizeof linea)<0) return -1;
+    return nu_send_response(c->fd,linea);
 }
