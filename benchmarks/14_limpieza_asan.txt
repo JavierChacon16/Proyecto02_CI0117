@@ -1,0 +1,3 @@
+rm -rf build pipelined pipectl pipelined-race
+
+Codigo de salida: 0

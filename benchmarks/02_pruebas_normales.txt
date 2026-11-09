@@ -1,0 +1,70 @@
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/pipelined.c -o build/pipelined.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/server.c -o build/server.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/scheduler.c -o build/scheduler.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/agents.c -o build/agents.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/protocol.c -o build/protocol.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/util.c -o build/util.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/graph.c -o build/graph.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/model.c -o build/model.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/yaml_parser.c -o build/yaml_parser.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/validator.c -o build/validator.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/script.c -o build/script.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/tasks.c -o build/tasks.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/vars.c -o build/vars.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/artifacts.c -o build/artifacts.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/logs.c -o build/logs.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/executor.c -o build/executor.o
+src/executor.c: In function ‘ejecutor_real’:
+src/executor.c:17:14: warning: unused variable ‘et’ [-Wunused-variable]
+   17 |     etapa_t *et = &plan->etapas[t->indice_etapa];
+      |              ^~
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  -MMD -MP -c src/pipectl.c -o build/pipectl.o
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_protocol.c build/protocol.o build/util.o -pthread -fopenmp -lm -o build/test_protocol
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_util.c build/util.o -pthread -fopenmp -lm -o build/test_util
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_cli.c build/util.o -pthread -fopenmp -lm -o build/test_cli
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_graph.c build/graph.o -pthread -fopenmp -lm -o build/test_graph
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_script.c build/script.o -pthread -fopenmp -lm -o build/test_script
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_tasks.c build/tasks.o -pthread -fopenmp -lm -o build/test_tasks
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_data.c build/tasks.o -pthread -fopenmp -lm -o build/test_data
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_motor.c build/agents.o -pthread -fopenmp -lm -o build/test_motor
+gcc -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp   build/pipectl.o build/protocol.o build/util.o -pthread -fopenmp -lm -o pipectl
+gcc -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp   build/pipelined.o build/server.o build/scheduler.o build/agents.o build/protocol.o build/util.o build/graph.o build/model.o build/yaml_parser.o build/validator.o build/script.o build/tasks.o build/vars.o build/artifacts.o build/logs.o build/executor.o -pthread -fopenmp -lm -o pipelined
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_busy.c build/server.o build/scheduler.o build/agents.o build/protocol.o build/util.o build/graph.o build/model.o build/yaml_parser.o build/validator.o build/script.o build/tasks.o build/vars.o build/artifacts.o build/logs.o build/executor.o -pthread -fopenmp -lm -o build/test_busy
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_yaml.c build/yaml_parser.o build/model.o build/graph.o -pthread -fopenmp -lm -o build/test_yaml
+gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp  tests/test_validator.c build/validator.o build/yaml_parser.o build/model.o build/graph.o -pthread -fopenmp -lm -o build/test_validator
+./build/test_protocol
+OK: protocolo y logs fragmentados sin perdida
+./build/test_util
+Pruebas de utilidades: OK
+./build/test_busy
+OK: BUSY con payload de 1 MiB sin Broken Pipe; drenaje parcial vence
+./build/test_cli
+Servidor escuchando en el puerto 40754 (motor A1; submit pendiente)
+Uso: pipectl <host> <puerto> <comando> [argumentos]
+Comandos: submit <archivo.yaml>, status <id>, logs <id> [trabajo] [--follow], cancel <id>, list, shutdown
+Maximo de agentes simultaneos: 0/2
+Pruebas del cliente: OK
+./build/test_graph
+Pruebas del grafo: OK
+./build/test_script
+Pruebas de script: OK
+./build/test_tasks
+Pruebas Sleep y Cpu: OK
+./build/test_data
+Pruebas Histogram y WordCount: OK
+./build/test_motor
+OK: limite global, round-robin y no doble despacho (200 repeticiones)
+OK: justicia round-robin con 1 agente (200 repeticiones)
+OK: DAG, failed/always y skipped en cascada (200 repeticiones)
+OK: condiciones de etapas, precedencia y agregacion (200 repeticiones)
+OK: cancelacion activa y en cola, sin doble trabajo (200 repeticiones)
+OK: queued -> failed por error interno (200 repeticiones)
+OK: presupuesto de extras y shutdown rapido (200 repeticiones)
+OK: shutdown con gracia 2s, demora observada 2.008 s
+OK: test_motor A1 completo
+./build/test_yaml
+OK: parser propio, DAG, rangos, errores con ubicacion, artefactos y 500 entradas aleatorias y prefijos truncados
+./build/test_validator
+Pruebas de validacion: OK
+
+Codigo de salida: 0

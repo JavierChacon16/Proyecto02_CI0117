@@ -1,0 +1,68 @@
+
+===== 01_limpieza =====
+Comando: make clean 
+01_limpieza: codigo 0
+
+===== 02_pruebas_normales =====
+Comando: make -j4 test 
+02_pruebas_normales: codigo 0
+
+===== 03_compilacion_werror =====
+Comando: make -j4 EXTRA=-Werror test 
+03_compilacion_werror: codigo 2
+
+===== 04_limpieza =====
+Comando: make clean 
+04_limpieza: codigo 0
+
+===== 05_restaurar_normal =====
+Comando: make -j4 all 
+05_restaurar_normal: codigo 0
+
+===== 06_compilar_test_submit =====
+Comando: make build/test_submit_yaml 
+06_compilar_test_submit: codigo 0
+
+===== 07_test_submit_yaml =====
+Comando: timeout 45s ./build/test_submit_yaml 
+07_test_submit_yaml: codigo 1
+
+===== 08_integracion_python =====
+Comando: timeout 180s python3 tests/test_integracion.py 
+08_integracion_python: codigo 1
+
+===== 09_compilar_integracion_vieja =====
+Comando: gcc -Iinclude -std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp tests/test_integration.c build/util.o -pthread -fopenmp -lm -o evidencia/test_integration_viejo 
+09_compilar_integracion_vieja: codigo 0
+
+===== 10_integracion_vieja =====
+Comando: timeout 20s ./evidencia/test_integration_viejo 
+10_integracion_vieja: codigo 1
+
+===== 11_prueba_manual =====
+Comando: timeout 30s python3 /home/dcjhor/Downloads/Proyecto02_CI0117-develop/kit_evidencia_ci0117/probar_submit_manual.py 
+11_prueba_manual: codigo 0
+
+===== 12_compilar_race =====
+Comando: make -j4 race 
+12_compilar_race: codigo 0
+
+===== 13_prueba_test_race =====
+Comando: make test-race 
+13_prueba_test_race: codigo 2
+
+===== 14_limpieza_asan =====
+Comando: make clean 
+14_limpieza_asan: codigo 0
+
+===== 15_sanitizadores =====
+Comando: env ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 make -j4 EXTRA=-g\ -fsanitize=address\,undefined\ -fno-omit-frame-pointer test 
+15_sanitizadores: codigo 0
+
+===== 16_limpieza_final =====
+Comando: make clean 
+16_limpieza_final: codigo 0
+
+===== 17_restaurar_normal =====
+Comando: make -j4 all 
+17_restaurar_normal: codigo 0

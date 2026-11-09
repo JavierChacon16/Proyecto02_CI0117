@@ -1,0 +1,7 @@
+2026-11-08T21:21:17+00:00
+--- Sistema ---
+Linux miUbuntu 7.0.0-42-generic #42-Ubuntu SMP PREEMPT_DYNAMIC Thu Oct 15 08:06:44 UTC 2026 x86_64 GNU/Linux
+--- GCC ---
+gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+--- CPUs ---
+4

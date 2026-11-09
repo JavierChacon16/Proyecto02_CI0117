@@ -1,0 +1,4 @@
+PENDIENTE: test-race requiere SUBMIT real (Fase 4/5)
+make: *** [Makefile:122: test-race] Error 2
+
+Codigo de salida: 2
