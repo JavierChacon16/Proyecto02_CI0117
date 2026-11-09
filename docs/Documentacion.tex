@@ -1,0 +1,338 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{pgfplots}
+\usepackage[hidelinks]{hyperref}
+\usepackage{setspace}
+\usepackage{caption}
+
+\pgfplotsset{compat=1.17}
+\setstretch{1.15}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\captionsetup{justification=justified,singlelinecheck=false}
+
+% Atajo para nombres de código
+\newcommand{\code}[1]{\texttt{#1}}
+
+% Gráfico de speedup (se usa en las Figuras 1 y 2)
+\newcommand{\graficospeedup}{%
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.9\textwidth, height=7cm,
+  title={Aceleración respecto a un hilo},
+  xlabel={Hilos OpenMP}, ylabel={Speedup $S(p)$},
+  xmode=log, log basis x=2,
+  xtick={1,2,4}, xticklabels={1,2,4}, minor tick num=0,
+  ymin=0.8, ymax=4.1,
+  grid=both, grid style={gray!25},
+  legend pos=north west, legend cell align=left,
+  legend style={font=\small}
+]
+\addplot[blue!70!black, mark=*, thick] coordinates {(1,1.0) (2,1.3089) (4,1.8268)};
+\addlegendentry{Cpu@1}
+\addplot[orange, mark=*, thick] coordinates {(1,1.0) (2,1.4682) (4,1.5725)};
+\addlegendentry{Histogram@1}
+\addplot[green!50!black, mark=*, thick] coordinates {(1,1.0) (2,0.8663) (4,0.9569)};
+\addlegendentry{WordCount@1}
+\addplot[gray, dashed] coordinates {(1,1) (2,2) (4,4)};
+\addlegendentry{Speedup ideal}
+\end{axis}
+\end{tikzpicture}}
+
+\begin{document}
+
+%--------------------------------------------------------------------
+% PORTADA
+%--------------------------------------------------------------------
+\begin{titlepage}
+\centering
+\vspace*{1cm}
+{\Large\bfseries UNIVERSIDAD DE COSTA RICA}\\[0.6cm]
+{\large FACULTAD DE INGENIERÍA}\\[0.3cm]
+{\large ESCUELA DE COMPUTACIÓN E INFORMÁTICA}\\[2.5cm]
+
+{\LARGE\bfseries Segunda Proyecto Programada}\\[1.5cm]
+
+{\large Curso: Programación Paralela y Concurrente}\\[0.3cm]
+{\large Sigla: CI-0117}\\[0.3cm]
+{\large Profesor: Ing. Sleyter Angulo, M.Sc.}\\[2cm]
+
+{\large\bfseries Estudiantes:}\\[0.4cm]
+{\large Jorge Antonio Durán Chinchilla, C02679}\\
+{\large Kenneth Fabricio Delgado Cárdenas, C22540}\\
+{\large Javier Chacón Rosales, C32052}\\[2.5cm]
+
+{\large Semestre II --- 2026}
+
+\vfill
+\end{titlepage}
+
+%--------------------------------------------------------------------
+\section{Introducción}
+
+Este proyecto implementa un servidor de red concurrente y asíncrono en lenguaje C para la administración y ejecución de \textit{pipelines} estructurados mediante descripciones YAML. El problema central consiste en coordinar de forma concurrente solicitudes de clientes, validar la consistencia de grafos de dependencias entre etapas, trabajos (\textit{jobs}) y pasos (\textit{steps}), y ejecutar tareas intensivas o \textit{scripts} controlados utilizando hilos POSIX y directivas de paralelismo OpenMP.
+
+El sistema abarca desde la admisión en red con control de límites de cola y bytes, el análisis sintáctico y validación semántica del \textit{pipeline}, hasta el motor de planificación concurrente, la gestión de bitácoras en tiempo real con soporte para monitoreo continuo (\code{-{}-follow}), y la manipulación segura de artefactos y variables de ejecución. La arquitectura modular separa estrictamente las responsabilidades de red, protocolos, programación de tareas y ejecución real, permitiendo alta estabilidad y tolerancia a fallos bajo condiciones de alta concurrencia.
+
+%--------------------------------------------------------------------
+\section{Desarrollo de la Solución}
+
+\subsection{Arquitectura del servidor y protocolo de comunicación}
+
+La red y la concurrencia se sustentan en un modelo robusto de atención a clientes con control estricto de tiempos de vida y vencimientos. Las solicitudes de los clientes se transmiten mediante un protocolo basado en líneas de texto estructuradas que implementa los comandos \code{SUBMIT}, \code{STATUS}, \code{LIST}, \code{CANCEL}, \code{LOGS} y \code{SHUTDOWN}.
+
+\begin{itemize}
+  \item \textbf{Admisión y control de recursos:} Las peticiones \code{SUBMIT} evalúan de forma atómica los límites de cola (\code{MAX\_COLA}) y presupuesto de bytes (\code{MAX\_BYTES\_COLA}), respondiendo \code{BUSY} y ejecutando un drenaje ante saturación.
+  \item \textbf{Transmisión segura (\code{nu\_write\_all}):} Se garantiza que los bloques de respuesta y flujos de bitácora se envíen por completo al descriptor del cliente sin truncamientos por fragmentación de \textit{sockets}.
+  \item \textbf{Apagado ordenado:} Ante la recepción de \code{SHUTDOWN} o señales del sistema, el servidor activa un período de gracia de dos segundos, tras el cual cancela de forma atómica los trabajos activos y libera recursos sin fugas de memoria.
+\end{itemize}
+
+\code{Planificar()} llama al ejecutor real. La batería de integración comprueba el flujo \code{SUBMIT} $\rightarrow$ trabajos $\rightarrow$ \code{STATUS}/\code{LOGS} y apagado.
+
+\subsection{Motor de planificación y ejecución jerárquica (\code{scheduler.c} y \code{motor.c})}
+
+El planificador de \code{agents.c} mantiene un conjunto global de agentes OpenMP que seleccionan trabajos, no \textit{pipelines} completos, y organiza las ejecuciones aceptadas en una cola de estados. La estructura compartida del servidor utiliza \code{pthread\_mutex\_t} (\code{servidor\_t.mu}) para exclusión mutua y variables de condición para gobernar esa cola. El reparto \textit{round-robin} busca alternar \textit{pipelines} con trabajo disponible para evitar que uno monopolice los agentes.
+
+Cada \textit{pipeline} contiene etapas, trabajos y pasos; internamente se desglosa en un arreglo contiguo de etapas y trabajos indexados globalmente. Las etapas y los trabajos pueden declarar dependencias; los pasos de un mismo trabajo se ejecutan secuencialmente. \code{yaml\_parser.c} construye las estructuras y verifica, entre otras reglas, nombres repetidos, referencias inválidas y ciclos. \code{model.c} contiene la función de liberación del plan.
+
+El módulo \code{executor.c} invoca el ejecutor real encargado de procesar secuencial o paralelamente cada paso del trabajo: \code{PASO\_SCRIPT} evalúa la interpolación dinámica de variables (\code{resolver\_variables\_texto}) e invoca \code{ejecutar\_script\_controlado} con control de plazos y cancelación cooperativa; \code{PASO\_SLEEP} y \code{PASO\_CPU} ejecutan tareas numéricas integradas de simulación de espera o procesamiento con hilos de CPU; y \code{PASO\_PUBLICAR} y \code{PASO\_DESCARGAR} gestionan el almacenamiento y recuperación de artefactos asociados a la ejecución mediante el módulo \code{artifacts.c}.
+
+Los estados requeridos son \code{queued}, \code{running}, \code{succeeded}, \code{partiallySucceeded}, \code{failed}, \code{canceled} y \code{skipped}. Una transición normal lleva un trabajo de \code{queued} a \code{running} y finalmente a un estado terminal. Un trabajo dependiente puede llegar a \code{skipped} cuando su condición no permite ejecutarlo. \code{continueOnError} permite que un trabajo continúe después de un fallo de paso y termine parcialmente satisfactorio cuando corresponda.
+
+El comando \code{STATUS} recorre de forma jerárquica el estado de las etapas, trabajos y pasos individuales, calculando los tiempos transcurridos en milisegundos mediante marcas de tiempo monotónicas (\code{clock\_gettime}).
+
+Las pruebas unitarias del motor verifican dependencias, límites y estados con 200 repeticiones por escenario. \code{ejecutor\_real()} conecta con los agentes y con las operaciones \code{motor\_paso\_iniciar}/\code{finalizar}. Las pruebas TCP verificaron \textit{scripts}, tareas, dependencias, cancelación, plazos y \code{continueOnError}. Los resultados del motor con ejecutores simulados se mantienen como evidencia unitaria.
+
+\subsection{Sistema de bitácoras y monitoreo continuo (\code{logs.h})}
+
+La gestión de bitácoras proporciona un canal de salida estructurado por etapas y trabajos. La función \code{consultar\_logs} permite extraer el contenido histórico o acotado por referencia específica de trabajo (\code{referencia}). Al activar la bandera \code{-{}-follow}, el servidor entra en un bucle de sondeo con espera acotada (\code{esperar\_ms = 2000}), leyendo y transmitiendo de forma incremental los nuevos fragmentos de datos generados por los agentes hasta que la ejecución finaliza.
+
+El sistema combina \textit{scripts} ejecutados en procesos hijos con cuatro tareas integradas: \code{Sleep@1}, \code{Cpu@1}, \code{WordCount@1} y \code{Histogram@1}. \code{script.c} emplea \code{posix\_spawn}, captura de salida, un grupo de procesos y seguimiento de cancelación y plazos. Las tareas controladas reciben una bandera de cancelación y un \textit{deadline}; las de datos emplean OpenMP.
+
+Los módulos \code{vars.c}, \code{artifacts.c} y \code{logs.c} mantienen, respectivamente, valores por ejecución, transferencia de archivos y bitácoras concurrentes. Las pruebas integradas de la copia corregida ejercitaron \code{\#\#setvariable}, la propagación de variables a trabajos dependientes, \code{CPU\_RESULT}, publicación/descarga de archivos regulares y \code{LOGS -{}-follow} por TCP.
+
+\subsection{Recursos compartidos y sincronización}
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}p{11.4cm}@{}}
+\toprule
+\textbf{Recurso} & \textbf{Diseño realizado} \\
+\midrule
+\endhead
+Límite global de agentes &
+Un único equipo OpenMP en \code{agents.c} atiende trabajos y reparte oportunidades por ejecución mediante \textit{round-robin}. La prueba unitaria verifica el límite global y no repetir despachos; la integración probó cuatro \textit{pipelines}, doce trabajos y dos agentes. \\[4pt]
+Estado de las ejecuciones &
+El mutex compartido \code{s->mu} protege las estructuras de estados consultadas por \code{STATUS}/\code{LIST}. La prueba TCP observó estados jerárquicos coherentes. \\[4pt]
+Bitácoras &
+\code{logs.c} protege sus registros con mutex propio y condición para \textit{follow}; los mensajes conservan la identificación de trabajo. Las pruebas cubren captura de salida y seguimiento de bitácoras a través de TCP. \\[4pt]
+Variables de ejecución &
+Las variables se publican al terminar un trabajo y se consultan desde los dependientes. La prueba integrada cubre \code{\#\#setvariable} y propagación; la regla prevista para conflictos entre ancestros usa el mayor índice global. \\[4pt]
+Cancelación y plazos &
+Los trabajos observan cancelación y plazos; los procesos hijos se matan como grupo y se recogen mediante \code{waitpid}. Las pruebas cubren \code{Sleep@1}, \textit{scripts} activos, \textit{timeout} y \code{SHUTDOWN}. \\[4pt]
+Paralelismo de datos &
+\code{WordCount} y \code{Histogram} producen salidas idénticas byte a byte con 1, 2, 4 y 8 hilos. Las mediciones corresponden a tareas aisladas con 1, 2 y 4 hilos. \\[4pt]
+Procesos hijos &
+\code{script.c} emplea \code{posix\_spawn} y un grupo de procesos propio; esto evita ejecutar lógica compleja entre \code{fork} y \code{exec} en un proceso multihilo. \\[4pt]
+Paralelismo &
+El ejecutor reserva extras con \code{motor\_reservar\_extras()} y los devuelve al finalizar las tareas paralelas. La batería del motor verifica el presupuesto. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Decisiones de diseño y alternativas}
+
+\begin{itemize}
+  \item \textbf{Equipo OpenMP global frente a un equipo por \textit{pipeline}:} El equipo global facilita controlar el número total de trabajos y evita multiplicar equipos para cada solicitud.
+  \item \textbf{DAG antes de ejecutar frente a resolver referencias durante la ejecución:} Detectar ciclos o referencias inválidas durante el \textit{parseo} impide iniciar un \textit{pipeline} que nunca podrá terminar normalmente.
+  \item \textbf{Bloqueos pequeños frente a mantener el mutex durante E/S:} Las operaciones de \textit{sockets}, archivos y procesos hijos pueden bloquear; mantener el mutex global durante ellas reduciría el paralelismo y podría provocar esperas prolongadas.
+  \item \textbf{Espacios de trabajo separados frente a un directorio compartido:} El aislamiento ayuda a que dos trabajos no modifiquen accidentalmente los mismos archivos; el intercambio previsto ocurre por artefactos.
+\end{itemize}
+
+%--------------------------------------------------------------------
+\section{Baterías de Pruebas y Validación Local}
+
+\subsection{Ambiente de pruebas y estrategia}
+
+Las validaciones funcionales, de integración y concurrencia se automatizaron a través de un \code{Makefile} exhaustivo que compila los ejecutables de prueba (\code{test\_protocol}, \code{test\_busy}, \code{test\_cli}, \code{test\_graph}, \code{test\_script}, \code{test\_tasks}, \code{test\_motor}, \code{test\_yaml} y \code{test\_validator}). Las pruebas se ejecutaron bajo Linux con GCC (\code{-std=c23 -Wall -Wextra -pedantic -O2 -pthread -fopenmp}).
+
+El equipo realizó las mediciones cuantitativas de la sección 4 en un equipo con Ubuntu Linux, GCC 15.2.0, AMD Ryzen 3 3100 y cuatro CPU lógicas. El ambiente de revisión del código fue diferente, pero allí no se tomaron series de rendimiento equivalentes. Por tanto, solo se dispone de un ambiente con tiempos medidos; no se presentan esas dos máquinas como si satisficieran el requisito de dos ambientes cuantitativos.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{3.4cm}>{\raggedright\arraybackslash}p{8cm}>{\raggedright\arraybackslash}p{3.6cm}@{}}
+\toprule
+\textbf{Área} & \textbf{Validación} & \textbf{Resultado} \\
+\midrule
+\endhead
+Protocolo y CLI & Validación de comandos válidos, estructuración y cabeceras & OK (100\% pasados) \\[3pt]
+Control de cola & Saturación de cola y bytes, respuesta \code{BUSY} y drenaje & OK (sincronizado) \\[3pt]
+Validación YAML & Análisis sintáctico, detección de errores semánticos y de DAG & OK (estructurado) \\[3pt]
+Motor concurrente & Ejecución de hilos OpenMP, estados de transición y cancelación & OK (estable) \\[3pt]
+Condición de carrera & Prueba bajo \code{-DSIN\_PROTECCION} en contadores de ID (\code{mu\_id}) & Evidenciada y resuelta \\
+\bottomrule
+\end{longtable}
+
+\subsection{Pruebas ejecutadas}
+
+La ejecución de \code{make -j4 EXTRA=-Werror test} terminó con código 0 y lanzó 16 comprobaciones: 15 ejecutables en C y la batería Python de integración. La salida de \code{test\_motor} confirma 200 repeticiones por escenario; \code{test\_yaml} reporta 500 entradas aleatorias o truncadas. La versión instrumentada con AddressSanitizer y UBSan terminó igualmente con código 0 sin errores reportados por esos sanitizadores en esa batería.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{4.6cm}>{\centering\arraybackslash}p{1.4cm}>{\raggedright\arraybackslash}p{9cm}@{}}
+\toprule
+\textbf{Prueba} & \textbf{Estado} & \textbf{Resultado observado} \\
+\midrule
+\endhead
+\code{make test} con \code{-Werror} & ok & Compilación y 16 comprobaciones terminadas correctamente. \\[3pt]
+\code{test\_motor} & ok & 200 repeticiones por escenario. Terminadas correctamente. \\[3pt]
+\code{test\_yaml}, \code{test\_validator} & ok & Parseo, ciclos, errores con ubicación y entradas aleatorias. \\[3pt]
+\code{test\_script\_capturado} & ok & Captura, plazos y eliminación de descendientes. \\[3pt]
+\code{test\_tasks\_controladas} & ok & Cancelación; datos idénticos con 1, 2, 4 y 8 hilos. \\[3pt]
+\code{test\_submit\_yaml} & ok & Recepción de YAML y errores \code{INVALID} con ubicación. \\[3pt]
+\code{test\_integration} (C) & ok & Pruebas de integración TCP. \\[3pt]
+\code{test\_integracion.py} & ok & Ejecución real, variables, artefactos, cancelación y bitácoras. \\[3pt]
+\code{make test} con ASan/UBSan & ok & Código 0; sin avisos en los casos ejecutados. \\[3pt]
+\code{make test-race} & ok & Evidencia de condición de carrera en la propuesta de identificadores. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Condición de carrera con \code{-DSIN\_PROTECCION}}
+
+\code{make test-race} ejecutó cien \code{SUBMIT} concurrentes en cada binario. En la versión protegida se observaron cien identificadores únicos. En la versión de demostración \code{-DSIN\_PROTECCION} se observaron 91 propuestas de ID repetidas en una corrida y 92 en la repetición. El motor rechazó las propuestas en conflicto: no se publicaron dos ejecuciones aceptadas con el mismo ID.
+
+Esta evidencia muestra la carrera en la asignación previa del contador compartido, no duplicados finales en la cola. La compilación demostrativa introduce una pausa de 2~ms para ampliar la ventana de carrera; no está presente en la variante protegida. El mecanismo de corrección es la exclusión mutua alrededor de la selección del siguiente identificador.
+
+%--------------------------------------------------------------------
+\section{Análisis de Rendimiento y Métricas}
+
+Se analizan 45 tiempos registrados en \code{tiempos.csv}: tres tareas, tres configuraciones de hilos y cinco repeticiones por configuración. El análisis numérico de \textit{speedup}, eficiencia y ley de Amdahl se completa con esos datos.
+
+\subsection{Escenarios y método de medición}
+
+Se deben comparar al menos: (a) un \textit{pipeline} ancho con varios trabajos independientes; (b) uno profundo, formado por una cadena de dependencias; (c) tareas \code{WordCount} e \code{Histogram} con archivos suficientemente grandes y distintos números de hilos; y (d) varios \textit{pipelines} ejecutados simultáneamente. Cada configuración se mide al menos cinco veces y se utiliza la mediana. Es importante ejecutar cada escenario en dos ambientes distintos y registrar procesador, hilos, GCC, sistema operativo y tamaño de entrada.
+
+\begin{center}
+\begin{tabular}{@{}llp{5cm}@{}}
+\toprule
+\textbf{Escenario} & \textbf{Qué se varía} & \textbf{Dato necesario} \\
+\midrule
+Ancho & Agentes 1, 2, 4 y capacidad disponible & Cinco tiempos por punto \\
+Profundo & Agentes 1, 2, 4 y capacidad disponible & Cinco tiempos por punto \\
+Datos & Hilos 1, 2, 4 y capacidad disponible & Archivo, bytes y tiempos \\
+Combinado & Número de \textit{pipelines} y agentes & Tiempo y concurrencia \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\textit{Speedup}, eficiencia y Amdahl}
+
+Para cada escenario se calcula la mediana $T(p)$ del tiempo con $p$ agentes o hilos, el \textit{speedup} $S(p)$, y la eficiencia $E(p)$:
+\[
+S(p) = \frac{T(1)}{T(p)}, \qquad E(p) = \frac{S(p)}{p}.
+\]
+
+\subsection{Mediciones en equipo Ubuntu}
+
+Se utilizó Ubuntu Linux x86\_64, GCC 15.2.0 y un AMD Ryzen 3 3100 con 4 procesadores lógicos visibles (virtualización KVM). El \textit{script} de medición compiló \code{src/tasks.c} con optimización \code{-O2} y OpenMP, fijó \code{OMP\_DYNAMIC=FALSE} y usó \code{clock\_gettime(CLOCK\_MONOTONIC)} para medir solo la ejecución de cada función. Los datos empleados fueron: \code{Cpu@1} con 50 millones de iteraciones; \code{Histogram@1} con archivo binario de 32~MiB y 16 \textit{bins}; \code{WordCount@1} con texto de 8~MiB. Cada configuración se repitió cinco veces.
+
+\begin{center}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Tarea} & \textbf{Hilos} & \textbf{Mediana (s)} & $\boldsymbol{S(p)}$ & $\boldsymbol{E(p)}$ \\
+\midrule
+\code{Cpu@1}       & 1 & 0,076632 & 1,0000 & 100,00\% \\
+\code{Cpu@1}       & 2 & 0,058547 & 1,3089 & 65,44\% \\
+\code{Cpu@1}       & 4 & 0,041948 & 1,8268 & 45,67\% \\
+\midrule
+\code{Histogram@1} & 1 & 0,099338 & 1,0000 & 100,00\% \\
+\code{Histogram@1} & 2 & 0,067658 & 1,4682 & 73,41\% \\
+\code{Histogram@1} & 4 & 0,063171 & 1,5725 & 39,31\% \\
+\midrule
+\code{WordCount@1} & 1 & 0,170531 & 1,0000 & 100,00\% \\
+\code{WordCount@1} & 2 & 0,196849 & 0,8663 & 43,32\% \\
+\code{WordCount@1} & 4 & 0,178219 & 0,9569 & 23,92\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[ht]
+\centering
+\graficospeedup
+\caption{Medianas de cinco repeticiones por cantidad de hilos, en segundos. Fuente: \code{evidencia/mediciones/tiempos.csv}.}
+\end{figure}
+
+\textbf{Interpretación:} \code{Cpu@1} mejora hasta 1,83 veces con cuatro hilos; \code{Histogram@1} alcanza 1,57 veces, pero su eficiencia disminuye al pasar de dos a cuatro hilos. \code{WordCount@1} no acelera para esta entrada: con dos hilos tarda más que con uno y con cuatro sigue ligeramente por encima del tiempo serial. Esto es compatible con una carga demasiado pequeña frente a los costos de coordinación, partición, unión y ordenación, sin que la evidencia permita atribuir el resultado a una única causa. Además, las ejecuciones son breves, por lo que pueden verse afectadas por ruido del sistema y del entorno virtualizado.
+
+\subsection{Cálculo numérico de la ley de Amdahl}
+
+Con valores reales de la tabla anterior, para \code{Cpu@1} y cuatro hilos se obtiene:
+\[
+S(4) = \frac{0{,}076632}{0{,}041948} = 1{,}8268, \qquad
+E(4) = \frac{1{,}8268}{4} = 0{,}4567.
+\]
+
+La fracción paralelizable efectiva es:
+\[
+f = \frac{1 - \dfrac{1}{1{,}8268}}{1 - \dfrac{1}{4}} = 0{,}6035,
+\]
+o sea, 60,35\%.
+
+\begin{figure}[ht]
+\centering
+\graficospeedup
+\caption{\textit{Speedup} medido respecto a un hilo. La línea discontinua indica aceleración ideal.}
+\end{figure}
+
+En \code{Cpu@1}, el \textit{speedup} observado a cuatro hilos supera la predicción obtenida con $f(2)$ (fracción paralelizable con 2 hilos) por aproximadamente 0,279. En \code{Histogram@1}, el valor medido queda 0,345 por debajo de la predicción. Estas diferencias indican que una fracción $f$ constante, sin costos adicionales, no describe exactamente las mediciones para las dos configuraciones. Pueden influir la partición del trabajo, el costo de coordinación, la memoria y el ruido de medición; no es posible identificar una causa única con estas series. En \code{WordCount@1}, las estimaciones algebraicas resultan $f(2) = -0{,}3087$ y $f(4) = -0{,}0601$, lo que significa que el programa fue más lento con dos y cuatro hilos que con uno. El costo de coordinar los hilos probablemente pesa mucho para esta entrada pequeña.
+
+\subsection{Relación con la ruta crítica y alcance de las métricas}
+
+La ley de Amdahl modela una porción serial y una porción paralelizable de una carga de trabajo fija. En un \textit{pipeline} profundo, la ruta de dependencias obliga a ejecutar parte de los trabajos secuencialmente y limita el \textit{speedup}; en uno ancho, varios trabajos independientes pueden avanzar con agentes distintos. En ambos escenarios influyen además el costo de red, la planificación, los procesos hijos y el acceso a archivos, que no se midieron en los 45 tiempos aquí reportados.
+
+\subsection{Tiempos individuales que respaldan las medianas}
+
+Se indican los cinco tiempos de cada configuración para facilitar verificación independiente del cálculo de las medianas. Las unidades son segundos.
+
+\begin{center}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Tarea} & \textbf{Hilos} & $\boldsymbol{t_1}$ & $\boldsymbol{t_2}$ & $\boldsymbol{t_3}$ & $\boldsymbol{t_4}$ & $\boldsymbol{t_5}$ \\
+\midrule
+\code{Cpu@1}       & 1 & 0,094826 & 0,085202 & 0,063816 & 0,063398 & 0,076632 \\
+\code{Cpu@1}       & 2 & 0,037622 & 0,050577 & 0,072779 & 0,061615 & 0,058547 \\
+\code{Cpu@1}       & 4 & 0,041948 & 0,051083 & 0,038367 & 0,042848 & 0,037393 \\
+\midrule
+\code{Histogram@1} & 1 & 0,099338 & 0,084766 & 0,111569 & 0,091340 & 0,106382 \\
+\code{Histogram@1} & 2 & 0,067658 & 0,073428 & 0,068587 & 0,061490 & 0,065380 \\
+\code{Histogram@1} & 4 & 0,063099 & 0,066393 & 0,063171 & 0,056945 & 0,069060 \\
+\midrule
+\code{WordCount@1} & 1 & 0,180553 & 0,166094 & 0,170531 & 0,158668 & 0,184950 \\
+\code{WordCount@1} & 2 & 0,196849 & 0,211047 & 0,198283 & 0,177947 & 0,193044 \\
+\code{WordCount@1} & 4 & 0,191941 & 0,195596 & 0,178219 & 0,170719 & 0,172883 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%--------------------------------------------------------------------
+\section{Conclusiones}
+
+\begin{itemize}
+  \item El diseño modular de la arquitectura permite separar de forma limpia la lógica de red, el almacenamiento de artefactos y la planificación concurrente de \textit{pipelines}.
+  \item El uso de exclusión mutua con \code{pthread\_mutex\_t} en estructuras globales previene eficazmente condiciones de carrera, garantizando consistencia en las consultas jerárquicas de estado.
+  \item La integración del comando \code{LOGS} con soporte \code{-{}-follow} enriquece la experiencia de monitoreo en tiempo real de los trabajos.
+  \item La arquitectura separa red, validación YAML, planificación OpenMP y ejecución de pasos. Después de las correcciones, la batería completa pasó con \code{-Werror}, sanitizadores y casos de integración TCP, incluidos \textit{scripts} reales, cuatro \textit{pipelines} concurrentes y apagado ordenado. La demostración \code{-DSIN\_PROTECCION} evidenció la carrera del contador de IDs antes de que el motor rechazara propuestas repetidas.
+  \item Los datos del equipo muestran aceleración moderada en \code{Cpu@1} (1,83 veces) e \code{Histogram@1} (1,57 veces) al utilizar cuatro hilos, mientras \code{WordCount@1} no mejora para la entrada probada.
+  \item Se calcularon numéricamente eficiencia y fracciones efectivas de Amdahl; sus discrepancias entre dos y cuatro hilos muestran que se trata de una aproximación y que el \textit{overhead} importa.
+\end{itemize}
+
+%--------------------------------------------------------------------
+\section{Repositorio}
+
+\url{https://github.com/JavierChacon16/Proyecto02_CI0117.git}
+
+\end{document}
