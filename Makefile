@@ -43,11 +43,15 @@ TESTS = $(BUILD)/test_protocol \
         $(BUILD)/test_cli \
         $(BUILD)/test_graph \
         $(BUILD)/test_script \
+        $(BUILD)/test_script_capturado \
         $(BUILD)/test_tasks \
+        $(BUILD)/test_tasks_controladas \
         $(BUILD)/test_data \
         $(BUILD)/test_motor \
         $(BUILD)/test_yaml \
-        $(BUILD)/test_validator
+        $(BUILD)/test_validator \
+        $(BUILD)/test_submit_yaml \
+        $(BUILD)/test_integration
 
 .PHONY: all test clean race test-race FORCE
 
@@ -105,21 +109,29 @@ $(BUILD)/test_submit_yaml: tests/test_submit_yaml.c $(BUILD)/util.o
 $(BUILD)/test_script: tests/test_script.c $(BUILD)/script.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
+$(BUILD)/test_script_capturado: tests/test_script_capturado.c $(BUILD)/script.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+$(BUILD)/test_tasks_controladas: tests/test_tasks_controladas.c $(BUILD)/tasks.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
 $(BUILD)/test_tasks: tests/test_tasks.c $(BUILD)/tasks.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
 $(BUILD)/test_data: tests/test_data.c $(BUILD)/tasks.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-# A1: test_model.c y test_submit_yaml.c son pruebas del contrato v1 y de
-# SUBMIT real respectivamente. No se compilan en make test hasta A2.
-$(BUILD)/test_motor: tests/test_motor.c $(BUILD)/agents.o
+# El ejecutor real necesita enlazar los modulos del servidor al probar motor.
+$(BUILD)/test_integration: tests/test_integration.c $(BUILD)/util.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
 
-# No se afirma una carrera con SUBMIT aun deshabilitado. La prueba de
-# 100 SUBMIT concurrentes debe incorporarse durante las Fases 4-5.
-test-race: race
-	@echo "PENDIENTE: test-race requiere SUBMIT real (Fase 4/5)"; exit 2
+$(BUILD)/test_motor: tests/test_motor.c $(filter-out $(BUILD)/pipelined.o,$(SERVER_OBJ))
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDLIBS) -o $@
+
+# La prueba instrumenta los IDs propuestos. La capa del motor impide
+# publicar IDs duplicados; se evidencia la carrera sin corromper su lista.
+test-race: race pipelined
+	python3 tests/test_race.py
 
 test: all $(TESTS)
 	./$(BUILD)/test_protocol
@@ -128,11 +140,16 @@ test: all $(TESTS)
 	./$(BUILD)/test_cli
 	./$(BUILD)/test_graph
 	./$(BUILD)/test_script
+	./$(BUILD)/test_script_capturado
 	./$(BUILD)/test_tasks
+	./$(BUILD)/test_tasks_controladas
 	./$(BUILD)/test_data
 	./$(BUILD)/test_motor
 	./$(BUILD)/test_yaml
 	./$(BUILD)/test_validator
+	./$(BUILD)/test_submit_yaml
+	./$(BUILD)/test_integration
+	python3 tests/test_integracion.py
 
 clean:
 	rm -rf $(BUILD) pipelined pipectl pipelined-race
