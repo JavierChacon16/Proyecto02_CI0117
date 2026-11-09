@@ -1,4 +1,3 @@
-
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,7 +51,7 @@ int main(void)
     }
 
     if (servidor == 0) {
-        execl("build/pipelined", "pipelined",
+        execl("./pipelined", "pipelined",
               puerto_texto, "2", ".", (char *)NULL);
         _exit(127);
     }
