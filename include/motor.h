@@ -26,6 +26,8 @@ void *motor_planificar_inyectado(void *argumento);
  * conserva los punteros hasta que el planificador termina y se han cerrado
  * las consultas; no libera e ni e->plan (el integrador se hace cargo). */
 int motor_encolar_ejecucion(servidor_t *s, ejecucion_t *e);
+/* Libera una reserva que SUBMIT no pudo transferir al motor. */
+void motor_liberar_admision(servidor_t *s, size_t bytes);
 /* Error interno de preparacion antes del despacho: QUEUED -> FAILED.
  * Desencola atomicamente si el job ya era elegible. */
 int motor_fallar_trabajo_preparacion(servidor_t *s, ejecucion_t *e,
