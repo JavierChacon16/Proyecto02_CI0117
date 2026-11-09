@@ -1,4 +1,3 @@
-
 #ifndef STATE_H
 #define STATE_H
 
@@ -38,6 +37,7 @@ typedef struct ejecucion {
     pipeline_t *plan;            /* propietario unico */
     char *yaml;                  /* temporal durante admision, puede ser NULL */
     size_t bytes;
+    int reserva_admision; /* 1: SUBMIT ya contabilizo bytes y cupo */
 
     /* Estados, tiempos, FIFO y enlaces bajo servidor_t.mu. */
     estado_t estado;
