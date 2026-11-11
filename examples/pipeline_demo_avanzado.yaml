@@ -1,0 +1,113 @@
+# Ejemplo ampliado CI-0117: 3 etapas, trabajos paralelos, 4 tareas,
+# variables, dependencias, artefactos, archivos de salida y bitacoras.
+name: demostracion_avanzada
+variables:
+  CURSO: CI0117
+  TEMA: pipelines
+stages:
+  - stage: preparacion
+    jobs:
+      - job: datos
+        timeoutInSeconds: 20
+        steps:
+          - script: |
+              printf '%s\n' \
+                'paralela concurrencia yaml servidor' \
+                'paralela openmp hilos datos' \
+                'servidor yaml paralela pruebas' \
+                'hilos concurrencia paralela' > datos.txt
+              printf '%s\n' '##setvariable LOTE=noviembre2026'
+              echo 'Datos de entrada preparados'
+          - task: Sleep@1
+            inputs:
+              seconds: 1
+          - publish: datos.txt
+            artifact: EntradaTexto
+      - job: computo
+        timeoutInSeconds: 20
+        steps:
+          - task: Cpu@1
+            inputs:
+              iterations: 250000
+              seed: 42
+              threads: 2
+          - script: |
+              printf 'CPU_RESULT=%s\n' '$(CPU_RESULT)' > cpu.txt
+              echo 'Calculo CPU terminado'
+          - publish: cpu.txt
+            artifact: ResultadoCpu
+
+  - stage: analisis
+    dependsOn: preparacion
+    jobs:
+      - job: palabras
+        steps:
+          - download: EntradaTexto
+            path: datos.txt
+          - task: WordCount@1
+            inputs:
+              file: datos.txt
+              threads: 2
+              output: palabras.txt
+              top: 5
+          - publish: palabras.txt
+            artifact: ConteoPalabras
+      - job: histograma
+        steps:
+          - download: EntradaTexto
+            path: datos.txt
+          - task: Histogram@1
+            inputs:
+              file: datos.txt
+              bins: 16
+              threads: 2
+              output: histograma.csv
+          - publish: histograma.csv
+            artifact: HistogramaBytes
+
+      - job: auditoria
+        dependsOn: [palabras, histograma]
+        condition: succeeded()
+        steps:
+          - download: ConteoPalabras
+            path: palabras.txt
+          - download: HistogramaBytes
+            path: histograma.csv
+          - script: |
+              test -s palabras.txt
+              test -s histograma.csv
+              printf 'Auditoria correcta: archivos de datos disponibles\n' > auditoria.txt
+              echo 'Auditoria realizada despues de ambos analisis'
+          - publish: auditoria.txt
+            artifact: AuditoriaDatos
+
+  - stage: resultados
+    dependsOn: analisis
+    jobs:
+      - job: consolidar
+        condition: always()
+        timeoutInSeconds: 20
+        steps:
+          - script: |
+              mkdir -p resultados
+              echo 'Preparando carpeta de resultados'
+          - download: ConteoPalabras
+            path: resultados/palabras.txt
+          - download: HistogramaBytes
+            path: resultados/histograma.csv
+          - download: ResultadoCpu
+            path: resultados/cpu.txt
+          - download: AuditoriaDatos
+            path: resultados/auditoria.txt
+          - script: |
+              printf 'RESULTADO DEL PIPELINE\n' > resultados/resumen.txt
+              printf 'Curso: %s\n' '$(CURSO)' >> resultados/resumen.txt
+              printf 'Tema: %s\n' '$(TEMA)' >> resultados/resumen.txt
+              printf 'Lote: %s\n' '$(LOTE)' >> resultados/resumen.txt
+              printf 'CPU_RESULT: %s\n' '$(CPU_RESULT)' >> resultados/resumen.txt
+              printf 'Generados: palabras.txt, histograma.csv, cpu.txt y auditoria.txt\n' >> resultados/resumen.txt
+              printf '\nCONTENIDO WORDCOUNT\n' >> resultados/resumen.txt
+              cat resultados/palabras.txt >> resultados/resumen.txt
+              echo 'Carpeta resultados generada correctamente'
+          - publish: resultados/resumen.txt
+            artifact: InformeFinal
