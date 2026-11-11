@@ -28,7 +28,17 @@ make -j4 EXTRA=-Werror
 
 Se generan los ejecutables `pipelined` (servidor) y `pipectl` (cliente).
 
-## 2. Iniciar el servidor
+## 2. Ejercutar pipeline avanzados
+
+```bash
+bash scripts/ejecutar_pipeline_avanzado.sh
+```
+
+
+Ejecuta el yaml avanzado y genera resultados
+
+
+## 3. Iniciar el servidor
 
 **Terminal 1:**
 
@@ -42,7 +52,7 @@ Se generan los ejecutables `pipelined` (servidor) y `pipectl` (cliente).
 
 Deja esta terminal abierta mientras haces las pruebas.
 
-## 3. Enviar comandos
+## 4. Enviar comandos
 
 **Terminal 2:** abre otra terminal en la misma carpeta.
 
@@ -67,7 +77,7 @@ Deja esta terminal abierta mientras haces las pruebas.
 
 **Nota:** el `1` es solo un ejemplo. Debes usar el ID que te devuelva `submit`. Para probar `cancel`, envía un pipeline que aún esté en ejecución. `--follow` puede permanecer abierto hasta que termine.
 
-## 4. Ejecutar las pruebas
+## 5. Ejecutar las pruebas
 
 **Pruebas completas y compilación sin advertencias:**
 
@@ -101,7 +111,7 @@ make clean
 make -j4 EXTRA=-Werror
 ```
 
-## 5. Limpiar archivos compilados
+## 6. Limpiar archivos compilados
 
 ```bash
 make clean
