@@ -58,7 +58,10 @@ Deja esta terminal abierta mientras haces las pruebas.
 
 ```bash
 # Enviar el YAML de ejemplo y recibir un identificador.
-./pipectl 127.0.0.1 8080 submit examples/pipeline_demo.yaml
+./pipectl 127.0.0.1 8080 submit examples/pipeline_demo.yam
+
+# Enviar yaml avanzado
+./pipectl 127.0.0.1 8080 submit examples/pipeline_demo_avanzado.yaml
 
 # Consultar las ejecuciones y su estado.
 ./pipectl 127.0.0.1 8080 list
